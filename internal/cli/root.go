@@ -1,4 +1,4 @@
-// Package cli wires the edgedeploy CLI. Commands are built by constructors
+// Package cli wires the babis CLI. Commands are built by constructors
 // that close over their own flag state — no package-level variables.
 // Business logic lives in the other internal packages.
 package cli
@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/BillyGrande/edge-deployer/internal/argocd"
-	"github.com/BillyGrande/edge-deployer/internal/execx"
+	"github.com/BillyGrande/babis/internal/argocd"
+	"github.com/BillyGrande/babis/internal/execx"
 )
 
 // Version is stamped at build time via -ldflags "-X ...cli.Version=v0.1.0".
@@ -37,12 +37,12 @@ func (g *globalOptions) argocd(r *execx.Runner) *argocd.Client {
 func NewRootCmd() *cobra.Command {
 	g := &globalOptions{}
 	root := &cobra.Command{
-		Use:   "edgedeploy",
+		Use:   "babis",
 		Short: "Deploy and observe autonomous ArgoCD edges, including air-gapped ones",
-		Long: `edgedeploy runs locally on an edge cluster: it installs ArgoCD (from the
+		Long: `babis runs locally on an edge cluster: it installs ArgoCD (from the
 internet or from a local air-gap registry), applies the ArgoCD manifests
 that drive the rest of the stack, and reports application status to a
-central edge-deployer operator over an outbound-only connection.`,
+central babis operator over an outbound-only connection.`,
 		Version:      Version,
 		SilenceUsage: true,
 	}

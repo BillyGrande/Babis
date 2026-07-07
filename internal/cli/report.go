@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/BillyGrande/edge-deployer/internal/wire"
+	"github.com/BillyGrande/babis/internal/wire"
 )
 
 // newReportCmd gathers local state and pushes one report to the central
@@ -62,7 +62,7 @@ func newReportCmd(g *globalOptions) *cobra.Command {
 			if g.dryRun {
 				return json.NewEncoder(os.Stdout).Encode(report)
 			}
-			return send(cmd.Context(), hub, os.Getenv("EDGEDEPLOY_TOKEN"), &report)
+			return send(cmd.Context(), hub, os.Getenv("BABIS_TOKEN"), &report)
 		},
 	}
 	cmd.Flags().StringVar(&hub, "hub", "", "base URL of the central operator ingest endpoint (required)")

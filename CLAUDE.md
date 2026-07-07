@@ -1,4 +1,4 @@
-# edge-deployer
+# Babis
 
 ## What This Is
 
@@ -8,7 +8,7 @@ without ever requiring inbound connectivity to an edge.
 
 Two deliverables, one module:
 
-- **`edgedeploy`** (CLI, runs on each edge): installs/converges ArgoCD via
+- **`babis`** (CLI, runs on each edge): installs/converges ArgoCD via
   Helm (online or from a local air-gap OCI registry), applies the ArgoCD
   Application manifests that drive the rest of the stack, and pushes compact
   status reports to the central operator. `report` is a one-shot designed
@@ -31,9 +31,9 @@ local artifact store (e.g. [Hauler]) and telemetry is outbound-only.
 ```
  EDGE (each site)                        CENTRAL CLUSTER
 ┌──────────────────────────┐            ┌─────────────────────────────┐
-│ ArgoCD (autonomous)      │            │ edge-deployer operator      │
+│ ArgoCD (autonomous)      │            │ babis operator      │
 │  ▲ helm install          │  HTTPS     │  ├─ ingest :8090  ◄─────────┼── POST /api/v1alpha1/reports
-│ edgedeploy CLI           │  outbound  │  └─ Edge reconciler         │
+│ babis CLI           │  outbound  │  └─ Edge reconciler         │
 │  ├─ bootstrap / apply    │  only      │       (Reachable condition) │
 │  └─ report (cron) ───────┼───────────►│ Edge CRs = fleet inventory  │
 │ [optional] local OCI     │            │  `kubectl get edges`        │
@@ -48,9 +48,9 @@ the condition to False. The operator never dials an edge.
 ## Layout
 
 ```
-cmd/edgedeploy/          # CLI entry (signal-aware context)
+cmd/babis/          # CLI entry (signal-aware context)
 cmd/operator/            # controller-runtime manager + ingest runnable
-api/v1alpha1/            # Edge CRD types (group fleet.edgedeployer.io)
+api/v1alpha1/            # Edge CRD types (group fleet.babis.dev)
 internal/cli/            # cobra wiring only — constructors, no globals
 internal/argocd/         # helm install + Application state via kubectl
 internal/manifests/      # collect/render/apply (.yaml + .yaml.tmpl Go templates)
@@ -102,7 +102,7 @@ in-cluster secret; templates only for user-shaped manifests).
 
 ```bash
 make check        # fmt + vet + staticcheck + test — run before every commit
-make build        # builds bin/edgedeploy and bin/operator
+make build        # builds bin/babis and bin/babis-operator
 make generate     # controller-gen: deepcopy after editing api/
 make manifests    # controller-gen: config/crd + config/rbac after editing api/ or RBAC markers
 ```
@@ -112,34 +112,20 @@ generated files. CI fails if they drift.
 
 Local end-to-end: `kind create cluster`, `kubectl apply -f config/crd/`,
 `go run ./cmd/operator --fleet-namespace default`, then from any machine
-with a kubeconfig+ArgoCD: `edgedeploy report --hub http://localhost:8090`.
+with a kubeconfig+ArgoCD: `babis report --hub http://localhost:8090`.
 
 ## Versioning / Compatibility Notes
 
-- API group `fleet.edgedeployer.io`, version `v1alpha1` — breaking CRD
+- API group `fleet.babis.dev`, version `v1alpha1` — breaking CRD
   changes are fine until v1beta1, but bump the version when they happen.
 - CLI version is stamped via
-  `-ldflags "-X github.com/BillyGrande/edge-deployer/internal/cli.Version=..."`
+  `-ldflags "-X github.com/BillyGrande/babis/internal/cli.Version=..."`
   (see Makefile `release`).
-- Ingest auth is a shared bearer token (`EDGEDEPLOY_INGEST_TOKEN` on the
-  operator, `EDGEDEPLOY_TOKEN` on edges). Known v1 limitation.
+- Ingest auth is a shared bearer token (`BABIS_INGEST_TOKEN` on the
+  operator, `BABIS_TOKEN` on edges). Known v1 limitation.
 
 ## Roadmap
 
-1. **v0.1**: what's here — bootstrap/apply/status/report + Edge inventory
-   with reachability. Harden, docs, kind-based e2e, release binaries.
-2. **Cluster identity**: `bootstrap --cluster-label k=v` + `cluster-labels`
-   subcommand — structured, merge-semantics management of the declarative
-   in-cluster secret; labels flow into reports automatically.
-3. **Air-gap first-class**: integrate with local artifact stores (Hauler,
-   Zarf-seeded registries — own neither): registry/store health in reports,
-   store version detection so `report --store-version` stops being a manual
-   flag, convenience subcommands where they add value.
-4. **Operator deploy assets**: Helm chart or kustomize under `config/`,
-   container image, TLS/ingress guidance for the ingest endpoint.
-5. **Per-edge auth**: token-per-edge or mTLS; auto-provisioning flow.
-6. **History/analytics**: optional consumer persisting reports (Postgres)
-   for "when did this edge last drift" questions — additive, CRDs stay the
-   source of truth for current state.
-7. **argocd-agent interop**: report enrichment for hybrid fleets (some
-   edges autonomous, some agent-managed).
+`docs/roadmap.md` is the single source of truth for milestones (v0.1
+"shows up" → identity → air-gap → auth/ops → history → hybrid). Don't
+duplicate roadmap content here or in architecture.md — link to it.

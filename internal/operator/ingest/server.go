@@ -22,8 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	fleetv1alpha1 "github.com/BillyGrande/edge-deployer/api/v1alpha1"
-	"github.com/BillyGrande/edge-deployer/internal/wire"
+	fleetv1alpha1 "github.com/BillyGrande/babis/api/v1alpha1"
+	"github.com/BillyGrande/babis/internal/wire"
 )
 
 const maxBodyBytes = 1 << 20 // 1 MiB is plenty for a report

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: edges.fleet.edgedeployer.io
+  name: edges.fleet.babis.dev
 spec:
-  group: fleet.edgedeployer.io
+  group: fleet.babis.dev
   names:
     kind: Edge
     listKind: EdgeList

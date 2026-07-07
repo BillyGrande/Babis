@@ -1,4 +1,4 @@
-// edgedeploy is the edge-side CLI: bootstrap ArgoCD, apply manifests,
+// babis is the edge-side CLI: bootstrap ArgoCD, apply manifests,
 // inspect and report status. See the repository README.
 package main
 
@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/BillyGrande/edge-deployer/internal/cli"
+	"github.com/BillyGrande/babis/internal/cli"
 )
 
 func main() {

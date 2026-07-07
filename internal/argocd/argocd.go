@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/BillyGrande/edge-deployer/internal/execx"
-	"github.com/BillyGrande/edge-deployer/internal/wire"
+	"github.com/BillyGrande/babis/internal/execx"
+	"github.com/BillyGrande/babis/internal/wire"
 )
 
 // DefaultChartRepo is the upstream Argo Helm repository, used unless the

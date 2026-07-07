@@ -1,4 +1,4 @@
-module github.com/BillyGrande/edge-deployer
+module github.com/BillyGrande/babis
 
 go 1.26.4
 

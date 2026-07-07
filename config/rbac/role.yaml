@@ -2,10 +2,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: edge-deployer-operator
+  name: babis-operator
 rules:
 - apiGroups:
-  - fleet.edgedeployer.io
+  - fleet.babis.dev
   resources:
   - edges
   verbs:
@@ -16,7 +16,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - fleet.edgedeployer.io
+  - fleet.babis.dev
   resources:
   - edges/status
   verbs:

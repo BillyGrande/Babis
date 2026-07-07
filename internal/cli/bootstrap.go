@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/BillyGrande/edge-deployer/internal/argocd"
+	"github.com/BillyGrande/babis/internal/argocd"
 )
 
 // newBootstrapCmd installs ArgoCD on the local cluster. Online edges pull

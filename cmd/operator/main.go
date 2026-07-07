@@ -16,9 +16,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	fleetv1alpha1 "github.com/BillyGrande/edge-deployer/api/v1alpha1"
-	"github.com/BillyGrande/edge-deployer/internal/operator/controller"
-	"github.com/BillyGrande/edge-deployer/internal/operator/ingest"
+	fleetv1alpha1 "github.com/BillyGrande/babis/api/v1alpha1"
+	"github.com/BillyGrande/babis/internal/operator/controller"
+	"github.com/BillyGrande/babis/internal/operator/ingest"
 )
 
 var (
@@ -73,7 +73,7 @@ func main() {
 		Client:    mgr.GetClient(),
 		Addr:      ingestAddr,
 		Namespace: fleetNamespace,
-		Token:     os.Getenv("EDGEDEPLOY_INGEST_TOKEN"),
+		Token:     os.Getenv("BABIS_INGEST_TOKEN"),
 	}); err != nil {
 		setupLog.Error(err, "adding ingest server")
 		os.Exit(1)

@@ -1,6 +1,6 @@
 # Architecture
 
-How edge-deployer works, why it is shaped this way, and where the
+How Babis works, why it is shaped this way, and where the
 boundaries are. See [positioning.md](positioning.md) for scope rationale.
 
 Legend: sections marked **[implemented]** exist today; **[planned]** are
@@ -11,9 +11,9 @@ agreed design not yet built.
 ```
  EDGE (each site)                            CENTRAL CLUSTER
 ┌───────────────────────────────┐           ┌──────────────────────────────┐
-│  ArgoCD (autonomous)          │           │  edge-deployer operator      │
+│  ArgoCD (autonomous)          │           │  babis operator      │
 │   ▲ installs/converges        │           │   ├─ ingest HTTP :8090 ◄─────┼── POST /api/v1alpha1/reports
-│  edgedeploy CLI               │  HTTPS,   │   └─ Edge reconciler         │
+│  babis CLI               │  HTTPS,   │   └─ Edge reconciler         │
 │   ├─ bootstrap                │  outbound │        (Reachable condition) │
 │   ├─ apply                    │  only     │                              │
 │   └─ report  ── cron/timer ───┼──────────►│  Edge CRs = fleet inventory  │
@@ -29,13 +29,13 @@ Three invariants define the topology:
 1. **Edges only dial out.** The operator never connects to an edge; there
    is nothing on an edge to connect *to*.
 2. **Each edge is autonomous.** Its own ArgoCD pulls desired state from
-   Git. edge-deployer never carries manifests between clusters.
+   Git. babis never carries manifests between clusters.
 3. **The edge-side footprint is a one-shot CLI**, not a daemon. Anything
    long-lived runs centrally.
 
 ## Components
 
-### `edgedeploy` CLI (edge side) [implemented]
+### `babis` CLI (edge side) [implemented]
 
 A single static Go binary. It shells out to whatever `kubectl` and `helm`
 are on PATH (overridable via `--kubectl`/`--helm`) rather than embedding
@@ -71,7 +71,7 @@ Reachability is **inferred, never probed**: silence past the timeout
 (default 15 m, per-edge override `spec.heartbeatTimeout`) means
 unreachable. This is the only definition compatible with outbound-only.
 
-### Edge CRD (`fleet.edgedeployer.io/v1alpha1`) [implemented]
+### Edge CRD (`fleet.babis.dev/v1alpha1`) [implemented]
 
 - `spec` — operator-side intent: `displayName`, `heartbeatTimeout`,
   `expectedStoreVersion`.
@@ -99,9 +99,9 @@ because it becomes an object name.
 ### Online edge
 
 ```bash
-edgedeploy bootstrap --chart-version <v> -f values.yaml
-edgedeploy apply ./bootstrap-apps --values edge-values.yaml
-# + cron: edgedeploy report --hub https://fleet.example.com ...
+babis bootstrap --chart-version <v> -f values.yaml
+babis apply ./bootstrap-apps --values edge-values.yaml
+# + cron: babis report --hub https://fleet.example.com ...
 ```
 
 ### Air-gapped edge [partially planned]
@@ -110,12 +110,12 @@ Today: bring your own local registry (e.g. a Hauler store serving on
 `localhost:5000`), then
 
 ```bash
-edgedeploy bootstrap --chart oci://localhost:5000/charts/argo-cd --plain-http
-edgedeploy apply ./bootstrap-apps --values edge-values.yaml
-edgedeploy report ... --registry-url http://localhost:5000 --store-version <v>
+babis bootstrap --chart oci://localhost:5000/charts/argo-cd --plain-http
+babis apply ./bootstrap-apps --values edge-values.yaml
+babis report ... --registry-url http://localhost:5000 --store-version <v>
 ```
 
-Planned: `edgedeploy airgap` subcommands wrapping store load / registry
+Planned: `babis airgap` subcommands wrapping store load / registry
 serve / health, and automatic store-version detection so the report flags
 disappear.
 
@@ -150,9 +150,9 @@ sharp edges (typos in `secret-type`, wrong server URL, lost labels on
 re-render). Instead:
 
 ```bash
-edgedeploy bootstrap --cluster-label region=gr-north --cluster-label tier=retail
+babis bootstrap --cluster-label region=gr-north --cluster-label tier=retail
 # and for day-2 identity changes without a redeploy:
-edgedeploy cluster-labels set key=value [...]
+babis cluster-labels set key=value [...]
 ```
 
 Semantics: create the secret if absent; otherwise **merge** the given
@@ -176,7 +176,7 @@ can always template the whole secret themselves and `apply` it — the
 ## Security model
 
 - Ingest auth is a single shared bearer token
-  (`EDGEDEPLOY_INGEST_TOKEN` / `EDGEDEPLOY_TOKEN`), constant-time compared.
+  (`BABIS_INGEST_TOKEN` / `BABIS_TOKEN`), constant-time compared.
   Acknowledged v1 limitation; per-edge tokens or mTLS are on the roadmap.
   TLS termination is deferred to the user's ingress in front of :8090.
 - Reports are treated as untrusted input: size-capped, JSON-decoded,
@@ -198,7 +198,7 @@ can always template the whole secret themselves and `apply` it — the
 ## Repository layout
 
 ```
-cmd/edgedeploy/        CLI entry (signal-aware context)
+cmd/babis/        CLI entry (signal-aware context)
 cmd/operator/          manager wiring: reconciler + ingest runnable
 api/v1alpha1/          Edge types; deepcopy + CRDs generated (make generate manifests)
 internal/cli/          cobra constructors only — no business logic, no globals
@@ -208,19 +208,11 @@ internal/execx/        exec wrapper (--dry-run / --verbose)
 internal/wire/         report contract (shared, k8s-free)
 internal/operator/     controller/ (reconciler), ingest/ (HTTP → Edge status)
 config/crd|rbac/       generated — never hand-edit
-docs/                  this file, positioning.md
+docs/                  this file, positioning.md, roadmap.md
 ```
 
-## Roadmap (ordered)
+## Roadmap
 
-1. **v0.1 hardening** — docs, kind-based e2e, release binaries, CI images.
-2. **Cluster identity** — `--cluster-label` / `cluster-labels` as above.
-3. **Air-gap first-class** — integrate with local artifact stores (Hauler,
-   Zarf — see positioning.md; own neither), store version detection.
-4. **Operator deploy assets** — Helm chart/kustomize, container image,
-   ingress/TLS guidance.
-5. **Per-edge auth** — token-per-edge or mTLS, enrollment flow.
-6. **History consumer** — optional Postgres-backed report archive for
-   trend questions; additive, CRDs remain source of truth for *now*.
-7. **argocd-agent interop** — represent agent-managed clusters as Edge
-   objects so hybrid fleets get one inventory.
+See [roadmap.md](roadmap.md) — the single source of truth for milestones.
+Planned items referenced in this document ([planned] markers) are specified
+there.

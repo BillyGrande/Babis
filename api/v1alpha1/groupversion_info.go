@@ -1,7 +1,7 @@
-// Package v1alpha1 contains the fleet API types for edge-deployer.
+// Package v1alpha1 contains the fleet API types for babis.
 //
 // +kubebuilder:object:generate=true
-// +groupName=fleet.edgedeployer.io
+// +groupName=fleet.babis.dev
 package v1alpha1
 
 import (
@@ -12,7 +12,7 @@ import (
 
 var (
 	// GroupVersion is the group version used to register these objects.
-	GroupVersion = schema.GroupVersion{Group: "fleet.edgedeployer.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "fleet.babis.dev", Version: "v1alpha1"}
 
 	// SchemeBuilder collects functions that add this group's types to a scheme.
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)

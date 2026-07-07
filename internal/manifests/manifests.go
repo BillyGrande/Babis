@@ -16,7 +16,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/BillyGrande/edge-deployer/internal/execx"
+	"github.com/BillyGrande/babis/internal/execx"
 )
 
 const tmplExt = ".yaml.tmpl"

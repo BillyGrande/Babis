@@ -1,12 +1,12 @@
 # Positioning
 
-What edge-deployer is, what it deliberately is not, and how to evaluate
+What Babis is, what it deliberately is not, and how to evaluate
 feature ideas against that boundary. This document exists so the scope
 survives feature temptations.
 
 ## The one-sentence pitch
 
-> edge-deployer is day-0 and fleet observability for edge clusters running
+> Babis is day-0 and fleet observability for edge clusters running
 > their own ArgoCD: install it anywhere — online or air-gapped — stamp the
 > edge's identity, and know what state the whole fleet is in, outbound-only.
 
@@ -27,7 +27,7 @@ that topology remain unsolved by the mainstream tools:
    installs are running, "which edges are out of sync / degraded / silent?"
    has no answer that doesn't require inbound connectivity to the edges.
 
-edge-deployer answers exactly these two, and nothing else. Air-gap support
+Babis answers exactly these two, and nothing else. Air-gap support
 is a capability, not the definition: connected edges get the same
 one-command bootstrap and the same inventory.
 
@@ -35,18 +35,18 @@ one-command bootstrap and the same inventory.
 
 [argocd-agent](https://github.com/argoproj-labs/argocd-agent) is the
 ecosystem's answer to hub-spoke ArgoCD over outbound-only connections, and
-it will keep absorbing the connected and hybrid use cases. edge-deployer
+it will keep absorbing the connected and hybrid use cases. babis
 does not compete with it — it is orthogonal:
 
 - **argocd-agent assumes ArgoCD is already installed** on the workload
-  cluster. edge-deployer's bootstrap is useful to argocd-agent users on
+  cluster. babis's bootstrap is useful to argocd-agent users on
   day one, literally.
 - **argocd-agent's principal reports status for clusters it manages.**
-  edge-deployer's inventory matters for the autonomous and air-gapped edges
+  babis's inventory matters for the autonomous and air-gapped edges
   the agent doesn't cover — and in hybrid fleets, the Edge CRD can be the
   single aggregation point across both kinds.
 
-If a proposed feature would make edge-deployer an *alternative* to
+If a proposed feature would make Babis an *alternative* to
 argocd-agent rather than a complement, the right move is to contribute that
 feature to argocd-agent instead.
 
@@ -56,7 +56,7 @@ feature to argocd-agent instead.
 packaging and transport into disconnected environments — Zarf as a full
 declarative package (images, charts, git repos, in-cluster registry via
 `zarf init`), Hauler as an OCI artifact store served as a local registry.
-edge-deployer builds **on top of** whichever is present and competes with
+Babis builds **on top of** whichever is present and competes with
 neither: `bootstrap` only needs *some* OCI registry reachable from the
 edge, and does not care whether Zarf, Hauler, or anything else put it
 there. Packaging, transport, and registry seeding are permanently out of
@@ -64,20 +64,20 @@ scope — the air-gap roadmap means *integrating with* these tools
 (store/registry health in reports, store version detection), never
 replacing them.
 
-The gap edge-deployer targets that neither covers: they are per-cluster
+The gap Babis targets that neither covers: they are per-cluster
 and deploy-time — no fleet inventory, no heartbeats, no ArgoCD awareness
 (identity stamping, Application sync/health). And for the common
 *semi-connected* edge (outbound-only WAN, Git pulled remotely, only images
-local), a lightweight local registry plus edge-deployer's reporting is a
+local), a lightweight local registry plus babis's reporting is a
 better fit than a full air-gap package.
 
 ## Relationship to Fleet, Sveltos, OCM/ACM
 
 Rancher Fleet, Sveltos, and Open Cluster Management distribute manifests to
-many clusters. edge-deployer does not distribute anything between clusters:
+many clusters. Babis does not distribute anything between clusters:
 each edge pulls its own desired state via its own ArgoCD from Git. If you
 need centralized manifest distribution, use one of those — they compose
-fine with edge-deployer (they deliver the Applications; edge-deployer did
+fine with babis (they deliver the Applications; babis did
 day 0 and reports state).
 
 ## Non-goals (hard lines)
@@ -85,7 +85,7 @@ day 0 and reports state).
 - **No manifest-distribution protocol.** Never. This is the trap that turns
   "complementary" into "competitor" overnight, and it is the feature class
   with the worst failure modes (a buggy applier can prune live workloads
-  fleet-wide). ArgoCD is the sync engine; edge-deployer never syncs.
+  fleet-wide). ArgoCD is the sync engine; babis never syncs.
 - **No inbound connections to edges.** Any feature that requires the
   central side to reach an edge is out of scope, however convenient.
 - **No resident edge agent.** The edge-side footprint is a CLI invoked by

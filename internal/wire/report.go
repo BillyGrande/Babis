@@ -1,5 +1,5 @@
 // Package wire defines the report format edges send to the central
-// operator's ingest endpoint. It is the contract between the edgedeploy CLI
+// operator's ingest endpoint. It is the contract between the babis CLI
 // (producer, typically from a cron/systemd timer) and the operator
 // (consumer) — keep it backward compatible once released.
 package wire

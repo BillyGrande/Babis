@@ -1,26 +1,51 @@
-# edge-deployer
+# Babis
 
-> **Status: pre-alpha.** APIs, CRDs, and the wire format will change without
-> notice until v0.1.
+> Named after no god, no titan, no hero. **Babis is the guy who actually
+> shows up and fixes it.**
 
-Day-0 installation and fleet observability for **edge clusters running
-their own ArgoCD** — online or air-gapped — with **outbound-only**
-connectivity from the edges.
+Day-0 installation and fleet watch for **edge clusters running their own
+ArgoCD** — online or air-gapped — with **outbound-only** connectivity from
+the edges.
 
-Most multi-cluster GitOps tooling assumes the hub can reach every cluster's
-API server. Edge fleets are usually the opposite: hundreds of small clusters
-behind NAT, flaky WAN links, sometimes no internet at all. edge-deployer
-embraces that topology:
+> **Status: pre-alpha.** APIs, CRDs, and the wire format will change
+> without notice until v0.1. See the [roadmap](docs/roadmap.md).
 
-- **`edgedeploy`** — a single-binary CLI that runs *on* the edge: install
-  ArgoCD (from the internet or a local air-gap OCI registry), apply the
-  ArgoCD Applications that drive everything else, and push a compact status
-  report to the central operator. Run `report` from cron — there is no
-  resident agent.
-- **operator** — runs in one central cluster. Reports materialize as `Edge`
-  custom resources: sync/health per application, air-gap store version,
-  local registry health, and a `Reachable` condition that flips when
-  heartbeats stop. Your fleet dashboard is `kubectl get edges`.
+## Why "Babis"?
+
+Cloud-native infrastructure is steered by a Greek pantheon: Kubernetes the
+helmsman, Argo the hero-ship, Istio the sail, Prometheus the titan. Babis
+(Μπάμπης — the folksy Greek diminutive of *Charalampos*) is not in the
+pantheon. Babis is the uncle with the toolbox. You call him when something
+at the far end of nowhere needs installing, and afterwards he keeps an eye
+on it and tells you if it breaks. That is the entire product.
+
+## The problem
+
+Most multi-cluster GitOps tooling assumes the hub can reach every
+cluster's API server. Edge fleets are usually the opposite: hundreds of
+small clusters behind NAT, flaky WAN links, sometimes no internet at all.
+Two questions remain unanswered in that topology:
+
+1. **How does the hundredth edge get ArgoCD the same way the first one
+   did?** — including edges where "install" must happen from a local OCI
+   registry instead of the internet.
+2. **What state is the fleet in right now?** — without ever connecting
+   *into* an edge.
+
+Babis answers exactly these two, and deliberately nothing else
+([positioning](docs/positioning.md)).
+
+## How it works
+
+- **`babis`** — a single-binary CLI that runs *on* the edge: install
+  ArgoCD (`bootstrap`), apply the ArgoCD Applications that drive
+  everything else (`apply`), inspect (`status`), and push a compact
+  heartbeat to the central operator (`report`). Run `report` from cron —
+  there is no resident agent.
+- **operator** — runs in one central cluster. Reports materialize as
+  `Edge` custom resources: sync/health per application, air-gap store
+  version, local registry health, and a `Reachable` condition that flips
+  when heartbeats stop. Your fleet dashboard is `kubectl get edges`.
 
 ```
 $ kubectl get edges
@@ -37,44 +62,48 @@ Central cluster:
 ```bash
 kubectl apply -f config/crd/
 kubectl create namespace edge-fleet
-EDGEDEPLOY_INGEST_TOKEN=change-me go run ./cmd/operator
+BABIS_INGEST_TOKEN=change-me go run ./cmd/operator
 ```
 
 On an edge (any cluster with `kubectl`/`helm` on PATH):
 
 ```bash
 # day 0 — online edge
-edgedeploy bootstrap --chart-version 7.7.0
-edgedeploy apply ./apps --values edge-values.yaml
+babis bootstrap --chart-version 7.7.0
+babis apply ./apps --values edge-values.yaml
 
-# day 0 — air-gapped edge (chart from a local OCI registry, e.g. hauler)
-edgedeploy bootstrap --chart oci://localhost:5000/charts/argo-cd --plain-http
+# day 0 — air-gapped edge (chart from a local OCI registry, e.g. Hauler or Zarf)
+babis bootstrap --chart oci://localhost:5000/charts/argo-cd --plain-http
 
 # heartbeat — add to cron / a systemd timer
-EDGEDEPLOY_TOKEN=change-me edgedeploy report \
+BABIS_TOKEN=change-me babis report \
   --hub https://fleet.example.com --edge-name shop-athens-042 \
   --label region=gr-north --registry-url http://localhost:5000
 ```
 
-## Relation to argocd-agent, Fleet, Sveltos, ...
+## What Babis is not
 
-edge-deployer does **not** distribute manifests between clusters and does
-not compete with [argocd-agent](https://github.com/argoproj-labs/argocd-agent),
-Rancher Fleet, or Sveltos. It targets fleets where each edge runs a fully
-autonomous ArgoCD (or is air-gapped enough that day-0 must happen from a
-local artifact store such as [Hauler](https://hauler.dev)) and answers the
-question those setups leave open: *what state is my fleet in right now?*
+Babis distributes no manifests between clusters, opens no connections into
+edges, and runs no daemon on them. It is a complement to — never a
+replacement for — [argocd-agent](https://github.com/argoproj-labs/argocd-agent)
+(hub-spoke ArgoCD), [Zarf](https://zarf.dev)/[Hauler](https://hauler.dev)
+(air-gap packaging and transport), and Fleet/Sveltos/OCM (manifest
+distribution). The boundary is written down in
+[docs/positioning.md](docs/positioning.md) and defended with litmus tests.
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) — full design and rationale
+- [docs/positioning.md](docs/positioning.md) — scope, non-goals, ecosystem
+- [docs/roadmap.md](docs/roadmap.md) — where this is going
+- [CLAUDE.md](CLAUDE.md) — contributor conventions
 
 ## Development
 
 ```bash
 make check   # fmt + vet + staticcheck + test
-make build   # bin/edgedeploy, bin/operator
+make build   # bin/babis, bin/babis-operator
 ```
-
-See [docs/architecture.md](docs/architecture.md) for the full design and
-[docs/positioning.md](docs/positioning.md) for scope; [CLAUDE.md](CLAUDE.md)
-has the contributor conventions.
 
 ## License
 

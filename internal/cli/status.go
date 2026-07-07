@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/BillyGrande/edge-deployer/internal/wire"
+	"github.com/BillyGrande/babis/internal/wire"
 )
 
 // newStatusCmd shows the local ArgoCD Application state — the same data a

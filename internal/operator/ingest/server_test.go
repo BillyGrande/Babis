@@ -13,8 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	fleetv1alpha1 "github.com/BillyGrande/edge-deployer/api/v1alpha1"
-	"github.com/BillyGrande/edge-deployer/internal/wire"
+	fleetv1alpha1 "github.com/BillyGrande/babis/api/v1alpha1"
+	"github.com/BillyGrande/babis/internal/wire"
 )
 
 func newTestServer(t *testing.T) *Server {

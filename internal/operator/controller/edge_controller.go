@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	fleetv1alpha1 "github.com/BillyGrande/edge-deployer/api/v1alpha1"
+	fleetv1alpha1 "github.com/BillyGrande/babis/api/v1alpha1"
 )
 
 type EdgeReconciler struct {
@@ -23,8 +23,8 @@ type EdgeReconciler struct {
 	DefaultHeartbeatTimeout time.Duration
 }
 
-// +kubebuilder:rbac:groups=fleet.edgedeployer.io,resources=edges,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=fleet.edgedeployer.io,resources=edges/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=fleet.babis.dev,resources=edges,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=fleet.babis.dev,resources=edges/status,verbs=get;update;patch
 
 func (r *EdgeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

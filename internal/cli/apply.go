@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/BillyGrande/edge-deployer/internal/manifests"
+	"github.com/BillyGrande/babis/internal/manifests"
 )
 
 // newApplyCmd renders and applies manifests — typically the ArgoCD

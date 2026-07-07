@@ -1,4 +1,4 @@
-// Package execx runs the external tools edgedeploy orchestrates (kubectl,
+// Package execx runs the external tools babis orchestrates (kubectl,
 // helm, hauler). Shelling out to whatever is on PATH — instead of embedding
 // client-go and the Helm SDK — keeps the binary small, respects the user's
 // kubeconfig/context setup, and works with any distribution's tooling.
