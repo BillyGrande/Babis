@@ -131,9 +131,10 @@ with a kubeconfig+ArgoCD: `edgedeploy report --hub http://localhost:8090`.
 2. **Cluster identity**: `bootstrap --cluster-label k=v` + `cluster-labels`
    subcommand — structured, merge-semantics management of the declarative
    in-cluster secret; labels flow into reports automatically.
-3. **Air-gap first-class**: `edgedeploy airgap` subcommands wrapping a local
-   Hauler store/registry (load, serve, health), store version detection so
-   `report --store-version` stops being a manual flag.
+3. **Air-gap first-class**: integrate with local artifact stores (Hauler,
+   Zarf-seeded registries — own neither): registry/store health in reports,
+   store version detection so `report --store-version` stops being a manual
+   flag, convenience subcommands where they add value.
 4. **Operator deploy assets**: Helm chart or kustomize under `config/`,
    container image, TLS/ingress guidance for the ingest endpoint.
 5. **Per-edge auth**: token-per-edge or mTLS; auto-provisioning flow.

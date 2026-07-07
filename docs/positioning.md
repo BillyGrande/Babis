@@ -50,6 +50,27 @@ If a proposed feature would make edge-deployer an *alternative* to
 argocd-agent rather than a complement, the right move is to contribute that
 feature to argocd-agent instead.
 
+## Relationship to Zarf and Hauler
+
+[Zarf](https://zarf.dev) and [Hauler](https://hauler.dev) solve artifact
+packaging and transport into disconnected environments — Zarf as a full
+declarative package (images, charts, git repos, in-cluster registry via
+`zarf init`), Hauler as an OCI artifact store served as a local registry.
+edge-deployer builds **on top of** whichever is present and competes with
+neither: `bootstrap` only needs *some* OCI registry reachable from the
+edge, and does not care whether Zarf, Hauler, or anything else put it
+there. Packaging, transport, and registry seeding are permanently out of
+scope — the air-gap roadmap means *integrating with* these tools
+(store/registry health in reports, store version detection), never
+replacing them.
+
+The gap edge-deployer targets that neither covers: they are per-cluster
+and deploy-time — no fleet inventory, no heartbeats, no ArgoCD awareness
+(identity stamping, Application sync/health). And for the common
+*semi-connected* edge (outbound-only WAN, Git pulled remotely, only images
+local), a lightweight local registry plus edge-deployer's reporting is a
+better fit than a full air-gap package.
+
 ## Relationship to Fleet, Sveltos, OCM/ACM
 
 Rancher Fleet, Sveltos, and Open Cluster Management distribute manifests to

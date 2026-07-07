@@ -215,8 +215,8 @@ docs/                  this file, positioning.md
 
 1. **v0.1 hardening** — docs, kind-based e2e, release binaries, CI images.
 2. **Cluster identity** — `--cluster-label` / `cluster-labels` as above.
-3. **Air-gap first-class** — `airgap` subcommands (Hauler-backed), store
-   version detection.
+3. **Air-gap first-class** — integrate with local artifact stores (Hauler,
+   Zarf — see positioning.md; own neither), store version detection.
 4. **Operator deploy assets** — Helm chart/kustomize, container image,
    ingress/TLS guidance.
 5. **Per-edge auth** — token-per-edge or mTLS, enrollment flow.
