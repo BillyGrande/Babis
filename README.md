@@ -72,7 +72,9 @@ make check   # fmt + vet + staticcheck + test
 make build   # bin/edgedeploy, bin/operator
 ```
 
-See [CLAUDE.md](CLAUDE.md) for architecture and design rules.
+See [docs/architecture.md](docs/architecture.md) for the full design and
+[docs/positioning.md](docs/positioning.md) for scope; [CLAUDE.md](CLAUDE.md)
+has the contributor conventions.
 
 ## License
 
