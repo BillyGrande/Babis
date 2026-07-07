@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          install-go: false
+      - name: test
+        run: go test ./...
+      - name: build
+        run: |
+          go build ./cmd/edgedeploy
+          go build ./cmd/operator
+      - name: generated code is up to date
+        run: |
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 object paths=./api/...
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 crd rbac:roleName=edge-deployer-operator paths=./... output:crd:dir=config/crd output:rbac:dir=config/rbac
+          git diff --exit-code
