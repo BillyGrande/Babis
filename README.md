@@ -3,9 +3,9 @@
 > **Status: pre-alpha.** APIs, CRDs, and the wire format will change without
 > notice until v0.1.
 
-Operate fleets of **autonomous ArgoCD edge clusters** — including air-gapped
-ones — from one central pane of glass, with **outbound-only** connectivity
-from the edges.
+Day-0 installation and fleet observability for **edge clusters running
+their own ArgoCD** — online or air-gapped — with **outbound-only**
+connectivity from the edges.
 
 Most multi-cluster GitOps tooling assumes the hub can reach every cluster's
 API server. Edge fleets are usually the opposite: hundreds of small clusters

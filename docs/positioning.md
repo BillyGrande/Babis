@@ -6,27 +6,30 @@ survives feature temptations.
 
 ## The one-sentence pitch
 
-> edge-deployer gets ArgoCD onto edges that start disconnected, and tells
-> you what state your fleet is in — regardless of whether each edge is
-> autonomous or argocd-agent-managed.
+> edge-deployer is day-0 and fleet observability for edge clusters running
+> their own ArgoCD: install it anywhere — online or air-gapped — stamp the
+> edge's identity, and know what state the whole fleet is in, outbound-only.
 
 ## The niche
 
 Most multi-cluster GitOps tooling assumes the hub can reach every cluster's
-API server, or at least that clusters can pull from the internet on day 0.
-Edge fleets are usually the opposite: many small clusters behind NAT, flaky
-WAN links, sometimes fully air-gapped. Two problems in that topology remain
-unsolved by the mainstream tools:
+API server. Edge fleets are usually the opposite: many small clusters
+behind NAT, flaky WAN links, sometimes fully air-gapped. Two problems in
+that topology remain unsolved by the mainstream tools:
 
-1. **Day 0 on a disconnected box.** Before any GitOps engine can work,
-   something must get artifacts onto the machine, stand up a local OCI
-   registry, install ArgoCD from it, and stamp the edge's identity.
-   Every distribution tool assumes this already happened.
+1. **Day 0, repeatably, on any edge.** Before any GitOps engine can work,
+   something must install ArgoCD, stamp the edge's identity, and apply the
+   seed Applications — the same way on the hundredth edge as on the first.
+   On disconnected edges (the hardest case, and first-class here) that also
+   means doing it from a local OCI registry instead of the internet. Every
+   distribution tool assumes all of this already happened.
 2. **Fleet-wide state, outbound-only.** Once hundreds of autonomous ArgoCD
    installs are running, "which edges are out of sync / degraded / silent?"
    has no answer that doesn't require inbound connectivity to the edges.
 
-edge-deployer answers exactly these two, and nothing else.
+edge-deployer answers exactly these two, and nothing else. Air-gap support
+is a capability, not the definition: connected edges get the same
+one-command bootstrap and the same inventory.
 
 ## Relationship to argocd-agent
 

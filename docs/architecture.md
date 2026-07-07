@@ -168,6 +168,11 @@ segments per environment, target revisions. The rule of thumb:
 templates.** Organization-specific parameters must arrive as labels or
 template values, never as named CLI flags.
 
+The structured path is a convenience default, not a restriction: users who
+need extra fields on the cluster secret (annotations, additional data keys)
+can always template the whole secret themselves and `apply` it — the
+`--cluster-label` merge semantics must tolerate a secret it didn't create.
+
 ## Security model
 
 - Ingest auth is a single shared bearer token
