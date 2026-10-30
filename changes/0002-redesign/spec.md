@@ -146,7 +146,8 @@ Pure functions, table-tested:
 
 - `Reachability(lastCheckin, timeout, now)` — unchanged from the
   prototype.
-- `ArgoCDReadiness(components)` — `True` when every component has
+- `ArgoCDReadiness(components)` — `Unknown` while the edge is not
+  `Reachable` (the reported state may be stale). Otherwise `True` when every component has
   `ready == desired` and `desired > 0`; `False` with the names of the
   components that are not ready. A missing report → `Unknown`.
 

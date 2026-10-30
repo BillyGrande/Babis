@@ -96,13 +96,13 @@ func TestReconcile(t *testing.T) {
 		{"fresh", v1alpha1.Edge{Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(time.Minute), ArgoCD: healthy}},
 			metav1.ConditionTrue, metav1.ConditionTrue, 14 * time.Minute},
 		{"stale", v1alpha1.Edge{Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(time.Hour), ArgoCD: healthy}},
-			metav1.ConditionFalse, metav1.ConditionTrue, 0},
+			metav1.ConditionFalse, metav1.ConditionUnknown, 0},
 		{"never", v1alpha1.Edge{},
 			metav1.ConditionUnknown, metav1.ConditionUnknown, 0},
 		{"spec timeout shortens", v1alpha1.Edge{
 			Spec:   v1alpha1.EdgeSpec{HeartbeatTimeout: &metav1.Duration{Duration: time.Minute}},
 			Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(2 * time.Minute), ArgoCD: healthy}},
-			metav1.ConditionFalse, metav1.ConditionTrue, 0},
+			metav1.ConditionFalse, metav1.ConditionUnknown, 0},
 		{"spec timeout lengthens", v1alpha1.Edge{
 			Spec:   v1alpha1.EdgeSpec{HeartbeatTimeout: &metav1.Duration{Duration: 4 * time.Hour}},
 			Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(time.Hour), ArgoCD: healthy}},

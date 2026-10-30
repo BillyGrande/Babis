@@ -55,6 +55,10 @@ func (r *EdgeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		rs, rr, rm, after := Reachability(last, timeout, now())
 		requeue = after
 		as, ar, am := ArgoCDReadiness(last, edge.Status.ArgoCD.Components)
+		if rs == metav1.ConditionFalse {
+			// The last reported components may be arbitrarily old.
+			as, ar, am = metav1.ConditionUnknown, "HeartbeatStale", "Edge is unreachable; its last reported ArgoCD state may be stale"
+		}
 
 		before := append([]metav1.Condition(nil), edge.Status.Conditions...)
 		meta.SetStatusCondition(&edge.Status.Conditions, metav1.Condition{

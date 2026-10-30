@@ -6,3 +6,4 @@ changes/*/bench/bin-*
 changes/*/bench/fixtures/
 changes/*/bench/fx-*/
 changes/*/bench/launcher
+.claude/worktrees/
