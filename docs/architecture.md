@@ -173,7 +173,9 @@ The P1 baseline is 500 edges at the 5-minute interval. Nothing may block
 - Ingest and reconciler write with server-side apply (one API call, no
   conflicts between the two writers).
 - `--max-inflight` bounds the request bodies in memory. `--max-edges` caps
-  what one leaked shared token can register.
+  what one leaked shared token can register. The count comes from the
+  informer cache, so a burst of new edges can pass the cap by the few
+  creates the cache has not seen yet. It is a guard, not an exact quota.
 - `replicas: 2` for the operator.
 
 Load test (`make load`, 1000 simulated edges, 300 apps each): with the

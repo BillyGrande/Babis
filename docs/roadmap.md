@@ -32,7 +32,7 @@ operator.
   checksums, published images
 - [ ] First public release under github.com/BillyGrande/babis
 - [ ] HTTPS against a real hub (ingress with TLS) tested end to end
-- [ ] Document the `--max-edges` overshoot (the count comes from the
+- [x] Document the `--max-edges` overshoot (the count comes from the
   informer cache and can lag a few creates)
 
 ## P1b - Agentless telemetry

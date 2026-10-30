@@ -9,7 +9,7 @@ with no inbound connectivity to edges. Two deliverables: the **`babis` CLI**
 check-ins into `Edge` CRs with `Reachable` / `ArgoCDReady` conditions.
 Complements — does not replace — [argocd-agent]. Read `docs/positioning.md`
 (hard non-goals, litmus tests) before adding features. The current design is
-`changes/0002-redesign/spec.md`; `docs/architecture.md` is updated in P1 step 8.
+`changes/0002-redesign/spec.md`; `docs/architecture.md` summarizes it.
 
 [argocd-agent]: https://github.com/argoproj-labs/argocd-agent
 
