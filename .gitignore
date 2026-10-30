@@ -1,4 +1,5 @@
 /bin/
+edge/target/
 *.test
 coverage.out
 changes/*/bench/bin-*

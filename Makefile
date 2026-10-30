@@ -1,45 +1,55 @@
-GO             ?= go
 VERSION        ?= dev
-LDFLAGS        := -s -w -X github.com/BillyGrande/babis/internal/cli.Version=$(VERSION)
-CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0
+LDFLAGS        := -s -w -X main.Version=$(VERSION)
+STATICCHECK    := go run honnef.co/go/tools/cmd/staticcheck@2026.2.2
+X86            := x86_64-unknown-linux-musl
+ARM64          := aarch64-unknown-linux-musl
 
-.PHONY: all build test vet lint fmt check generate manifests release clean
+.PHONY: all check central-check edge-check fmt build build-edge-arm64 \
+	generate manifests images e2e clean
 
 all: check build
 
-build:
-	$(GO) build -o bin/babis ./cmd/babis
-	$(GO) build -o bin/babis-operator ./cmd/operator
+check: central-check edge-check
 
-test:
-	$(GO) test ./...
+central-check:
+	@out="$$(cd central && gofmt -l .)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	cd central && go vet ./...
+	cd central && $(STATICCHECK) ./...
+	cd central && go test ./...
 
-vet:
-	$(GO) vet ./...
-
-# staticcheck: go install honnef.co/go/tools/cmd/staticcheck@latest
-lint:
-	staticcheck ./...
+edge-check:
+	cd edge && cargo fmt --check
+	cd edge && cargo clippy --all-targets -- -D warnings
+	cd edge && cargo test
 
 fmt:
-	gofmt -l -w .
+	cd central && gofmt -w .
+	cd edge && cargo fmt
 
-check: fmt vet lint test
+build:
+	mkdir -p bin
+	cd central && CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' \
+		-o ../bin/babis-operator ./cmd/babis-operator
+	cd edge && cargo zigbuild --release --target $(X86)
+	cp edge/target/$(X86)/release/babis bin/babis
 
-# Regenerate api/ deepcopy code. Run after editing api/ types.
+build-edge-arm64:
+	cd edge && cargo zigbuild --release --target $(ARM64)
+	mkdir -p bin
+	cp edge/target/$(ARM64)/release/babis bin/babis-linux-arm64
+
 generate:
-	$(CONTROLLER_GEN) object paths=./api/...
+	@echo "not implemented yet (plan step 3)"; exit 1
 
-# Regenerate CRDs and RBAC. Run after editing api/ types or RBAC markers.
 manifests:
-	$(CONTROLLER_GEN) crd rbac:roleName=babis-operator paths=./... \
-		output:crd:dir=config/crd output:rbac:dir=config/rbac
+	@echo "not implemented yet (plan step 3)"; exit 1
 
-# Static release binaries.
-release:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o bin/babis-linux-amd64 ./cmd/babis
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o bin/babis-linux-arm64 ./cmd/babis
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags='$(LDFLAGS)' -o bin/babis-operator-linux-amd64 ./cmd/operator
+images:
+	@echo "not implemented yet (plan step 5)"; exit 1
+
+e2e:
+	@echo "not implemented yet (plan step 6)"; exit 1
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ edge/target/
