@@ -1,6 +1,7 @@
 VERSION        ?= dev
 LDFLAGS        := -s -w -X main.Version=$(VERSION)
 STATICCHECK    := go run honnef.co/go/tools/cmd/staticcheck@2026.2.2
+CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0
 X86            := x86_64-unknown-linux-musl
 ARM64          := aarch64-unknown-linux-musl
 
@@ -44,10 +45,11 @@ build-edge-arm64:
 	cp edge/target/$(ARM64)/release/babis bin/babis-linux-arm64
 
 generate:
-	@echo "not implemented yet (plan step 3)"; exit 1
+	cd central && $(CONTROLLER_GEN) object paths=./api/...
 
 manifests:
-	@echo "not implemented yet (plan step 3)"; exit 1
+	cd central && $(CONTROLLER_GEN) crd rbac:roleName=babis-operator paths=./... \
+		output:crd:dir=config/crd output:rbac:dir=config/rbac
 
 images:
 	@echo "not implemented yet (plan step 5)"; exit 1
