@@ -78,8 +78,14 @@ run_version() {
   kubectl create namespace argocd
   kubectl apply -n argocd --server-side --force-conflicts \
     -f "https://raw.githubusercontent.com/argoproj/argo-cd/${VERSION}/manifests/install.yaml" >/dev/null
-  kubectl -n argocd rollout status deploy --timeout=300s
-  kubectl -n argocd rollout status statefulset --timeout=300s
+  # Image pulls on shared CI runners are sometimes slow; on timeout, show why.
+  if ! kubectl -n argocd rollout status deploy --timeout=600s ||
+    ! kubectl -n argocd rollout status statefulset --timeout=600s; then
+    echo "FAIL: ArgoCD $VERSION did not become ready" >&2
+    kubectl -n argocd get pods -o wide >&2 || true
+    { kubectl -n argocd get events --sort-by=.lastTimestamp | tail -30; } >&2 || true
+    exit 1
+  fi
 
   for n in 1 2 3; do
     kubectl apply -f - <<APP
