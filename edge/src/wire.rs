@@ -95,12 +95,22 @@ fn validate_label_key(k: &str) -> Result<(), String> {
     if name.len() > 63 || !valid_label_name(name) {
         return Err(format!("invalid name {:?}", truncate(name)));
     }
-    for res in RESERVED {
-        if prefix == res || prefix.ends_with(&format!(".{res}")) {
-            return Err(format!("reserved prefix {res}"));
-        }
+    if let Some(res) = reserved_prefix(prefix) {
+        return Err(format!("reserved prefix {res}"));
     }
     Ok(())
+}
+
+fn reserved_prefix(prefix: &str) -> Option<&'static str> {
+    RESERVED
+        .into_iter()
+        .find(|res| prefix == *res || prefix.ends_with(&format!(".{res}")))
+}
+
+/// True if the label key has a reserved prefix (exact or subdomain).
+pub fn is_reserved_label(key: &str) -> bool {
+    key.split_once('/')
+        .is_some_and(|(prefix, _)| reserved_prefix(prefix).is_some())
 }
 
 impl CheckinRequest {
