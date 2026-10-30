@@ -366,14 +366,33 @@ risks are bursts and the write path, not volume:
 
 | Risk | Design (P1, plan step 6b) |
 |---|---|
-| Every CronJob fires in the same second (`*/5`). Ingest calls are throttled by the client-side QPS limit (controller-runtime default 20, burst 30), so a burst of 500 waits ~50 s and edges hit their 30 s timeout. | Edge `--jitter` (random delay before it observes; CronJob default 60 s). Ingest flags `--kube-api-qps` / `--kube-api-burst` (defaults 50 / 100). |
+| Every CronJob fires in the same second (`*/5`). Client-side throttling is already off (controller-runtime sets QPS −1 and relies on API Priority and Fairness), so the burst queues on **API-server/etcd write throughput**: the baseline measured p99 8 s for 1000 simultaneous check-ins. | Edge `--jitter` (random delay before it observes; CronJob default 60 s). Fewer and smaller writes (rows below, and "Beyond 5000" below). `--kube-api-qps` / `--kube-api-burst` exist but stay disabled by default. |
 | Each check-in does an uncached GET plus a diff-based merge patch: two API calls, and a stale or concurrent view can drop a change. | Ingest writes status with **server-side apply** (field manager `babis-ingest`), owning every status field except `conditions`. One call, no GET, correct under concurrent writers. On `404`, create the Edge, then apply. |
 | One leaked shared token can register unlimited Edges and fill etcd. | `--max-edges` (default 2000): a new edge beyond the limit gets `429`; known edges keep working. Per-edge tokens stay the P3 gate. |
 | One ingest replica. | Ingest needs no leader election and SSA is safe with several writers, so `replicas: 2` behind the Service. Only the leader reconciles. |
 | No evidence. | `test/load/`: N simulated edges (default 1000, 300 apps each, jittered) against the kind operator. Pass: 0 errors, p99 < 1 s, operator RSS recorded. |
 
-Later, only if the load test shows the need: gzip request bodies, and moving
-`status.apps` out of the Edge object (for edges with thousands of apps).
+### Beyond 5000: the heartbeat/status split
+
+The cost of a check-in is one write of the **whole** Edge object (etcd
+stores and the watch sends full objects), ~30 KB with 300 apps — even when
+only `lastCheckinTime` changed. Kubernetes solved the same problem for
+nodes: Node status (large) is written only when it changes, and a tiny
+`Lease` carries the heartbeat. Babis can do the same when the load test
+says so:
+
+- Ingest hashes the reported state; it writes `Edge.status` only when the
+  hash changes.
+- The heartbeat goes to a small per-edge object (a `coordination.k8s.io`
+  `Lease` in the fleet namespace), which `Reachable` reads.
+- The operator cache strips `status.apps` (cache transform), so memory grows
+  with the number of edges, not edges × apps.
+
+This cuts write bytes per steady-state check-in by ~100× and is the main
+lever for very large fleets. Language and replicas are smaller levers: the
+bottleneck is the API server, which neither changes.
+
+Also later, only if measured: gzip request bodies.
 
 ## ArgoCD coupling
 

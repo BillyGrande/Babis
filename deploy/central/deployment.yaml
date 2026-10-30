@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: babis-operator
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: babis-operator
@@ -50,9 +50,12 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
+            # Load test (1000 edges x 300 apps, burst): operator peak RSS
+            # 117 MiB. 192Mi keeps that under 75 % of the limit
+            # (117 / 0.75 = 156). Re-measure with `make load` when it changes.
             limits:
-              memory: 256Mi
+              memory: 192Mi
           securityContext:
             runAsNonRoot: true
             readOnlyRootFilesystem: true

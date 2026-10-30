@@ -44,6 +44,8 @@ type Component struct {
 type ArgoCDStatus struct {
 	// +optional
 	Version string `json:"version,omitempty"`
+	// Atomic: ingest sends the whole list on every check-in.
+	// +listType=atomic
 	// +optional
 	Components []Component `json:"components,omitempty"`
 }
@@ -67,11 +69,17 @@ type EdgeStatus struct {
 	LastCheckinTime *metav1.Time `json:"lastCheckinTime,omitempty"`
 	// +optional
 	Telemetry Telemetry `json:"telemetry,omitempty"`
-	// Labels are what the edge reports about itself.
+	// Labels are what the edge reports about itself. Granular map: a label
+	// that is no longer reported is removed by server-side apply.
+	// +mapType=granular
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
 	// +optional
 	ArgoCD ArgoCDStatus `json:"argocd,omitempty"`
+	// Atomic: ingest sends the whole list on every check-in, so an app that
+	// leaves the report leaves the status. Names are not checked for
+	// duplicates on the wire, so the list is not a keyed map.
+	// +listType=atomic
 	// +optional
 	Apps []App `json:"apps,omitempty"`
 	// +optional

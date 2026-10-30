@@ -2,9 +2,12 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,8 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/BillyGrande/babis/central/api/v1alpha1"
+	"github.com/BillyGrande/babis/central/internal/wire"
 )
 
 const (
@@ -31,13 +36,31 @@ func newServer(t *testing.T, objs ...client.Object) (*Server, client.Client) {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&v1alpha1.Edge{}).WithObjects(objs...).Build()
+	c := fakeAPI(scheme, objs...)
 	s, err := New(Config{Token: token, Namespace: ns, Client: c, Now: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, c
+}
+
+// fakeAPI is controller-runtime's fake client with server-side apply on the
+// status subresource. The fake creates a missing object on a status apply; the
+// real API server answers NotFound, so this wrapper does the same.
+func fakeAPI(scheme *runtime.Scheme, objs ...client.Object) client.Client {
+	return fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Edge{}).WithObjects(objs...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
+				if p.Type() == types.ApplyPatchType {
+					var cur v1alpha1.Edge
+					if err := c.Get(ctx, client.ObjectKeyFromObject(obj), &cur); err != nil {
+						return err
+					}
+				}
+				return c.SubResource(sub).Patch(ctx, obj, p, opts...)
+			},
+		}).Build()
 }
 
 func post(s *Server, auth, body string) *httptest.ResponseRecorder {
@@ -204,5 +227,189 @@ func TestNewRequiresToken(t *testing.T) {
 	}
 	if s.NeedLeaderElection() {
 		t.Error("ingest must not need leader election")
+	}
+}
+
+func TestApplyBodyHasNoConditions(t *testing.T) {
+	var req wire.CheckinRequest
+	if err := json.Unmarshal([]byte(full), &req); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(buildApply(ns, &req, clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["apiVersion"] != "fleet.babis.dev/v1alpha1" || m["kind"] != "Edge" {
+		t.Errorf("type meta: %v", m)
+	}
+	md := m["metadata"].(map[string]any)
+	if md["name"] != "e1" || md["namespace"] != ns || len(md) != 2 {
+		t.Errorf("metadata: %v", md)
+	}
+	if _, ok := m["spec"]; ok {
+		t.Error("spec in apply body")
+	}
+	st := m["status"].(map[string]any)
+	if _, ok := st["conditions"]; ok {
+		t.Error("conditions in apply body")
+	}
+	for _, k := range []string{"lastCheckinTime", "telemetry", "labels", "argocd", "apps", "appsTotal", "appsSynced", "appsHealthy"} {
+		if _, ok := st[k]; !ok {
+			t.Errorf("status.%s missing", k)
+		}
+	}
+	if l := st["labels"].(map[string]any); len(l) != 1 || l["region"] != "gr" {
+		t.Errorf("labels: %v", l)
+	}
+	if a := st["apps"].([]any); len(a) != 3 {
+		t.Errorf("apps: %v", a)
+	}
+}
+
+func TestRemovedLabelAndAppDisappear(t *testing.T) {
+	s, c := newServer(t)
+	post(s, "Bearer "+token, `{"edge":"e1","labels":{"a":"1","b":"2"},"apps":[{"name":"x","sync":"Synced","health":"Healthy"},{"name":"y"}]}`)
+	rec := post(s, "Bearer "+token, `{"edge":"e1","labels":{"a":"1"},"apps":[{"name":"x","sync":"Synced","health":"Healthy"}]}`)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	st := getEdge(t, c, "e1").Status
+	if len(st.Labels) != 1 || st.Labels["a"] != "1" {
+		t.Errorf("labels %v", st.Labels)
+	}
+	if len(st.Apps) != 1 || st.Apps[0].Name != "x" {
+		t.Errorf("apps %v", st.Apps)
+	}
+	post(s, "Bearer "+token, `{"edge":"e1"}`)
+	st = getEdge(t, c, "e1").Status
+	if len(st.Labels) != 0 || len(st.Apps) != 0 || st.AppsTotal != 0 {
+		t.Errorf("not cleared: %+v", st)
+	}
+}
+
+func TestConditionsSurviveCheckin(t *testing.T) {
+	s, c := newServer(t)
+	post(s, "Bearer "+token, full)
+	e := getEdge(t, c, "e1")
+	cond := metav1.Condition{
+		Type: "Reachable", Status: metav1.ConditionTrue, Reason: "HeartbeatFresh", Message: "m",
+		LastTransitionTime: metav1.NewTime(clock),
+	}
+	e.Status.Conditions = []metav1.Condition{cond}
+	if err := c.Status().Update(context.Background(), &e); err != nil {
+		t.Fatal(err)
+	}
+	post(s, "Bearer "+token, `{"edge":"e1","labels":{"z":"1"}}`)
+	got := getEdge(t, c, "e1").Status
+	if len(got.Conditions) != 1 || got.Conditions[0].Reason != "HeartbeatFresh" {
+		t.Errorf("conditions: %+v", got.Conditions)
+	}
+	if got.Labels["z"] != "1" {
+		t.Errorf("labels: %v", got.Labels)
+	}
+}
+
+func TestConcurrentCheckins(t *testing.T) {
+	s, c := newServer(t)
+	var wg sync.WaitGroup
+	codes := make([]int, 8)
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := fmt.Sprintf(`{"edge":"e1","labels":{"n":"%d"}}`, i)
+			codes[i] = post(s, "Bearer "+token, body).Code
+		}()
+	}
+	wg.Wait()
+	for i, code := range codes {
+		if code != 200 {
+			t.Errorf("request %d: %d", i, code)
+		}
+	}
+	if len(getEdge(t, c, "e1").Status.Labels) != 1 {
+		t.Error("labels not exactly one")
+	}
+}
+
+type fakeIndex struct {
+	known map[string]bool
+	n     int
+}
+
+func (f fakeIndex) Has(_, name string) bool { return f.known[name] }
+func (f fakeIndex) Count() int              { return f.n }
+
+func TestMaxEdges(t *testing.T) {
+	tests := []struct {
+		name string
+		edge string
+		code int
+	}{
+		{"new edge at limit", "new", 429},
+		{"known edge at limit", "old", 200},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, c := newServer(t)
+			s.cfg.Index = fakeIndex{known: map[string]bool{"old": true}, n: 2}
+			s.cfg.MaxEdges = 2
+			rec := post(s, "Bearer "+token, fmt.Sprintf(`{"edge":%q}`, tc.edge))
+			if rec.Code != tc.code {
+				t.Fatalf("code %d, want %d (%s)", rec.Code, tc.code, rec.Body)
+			}
+			var l v1alpha1.EdgeList
+			_ = c.List(context.Background(), &l)
+			if tc.code == 429 && (len(l.Items) != 0 || !strings.Contains(rec.Body.String(), `"error"`)) {
+				t.Errorf("429 must create nothing and be JSON: %v %s", l.Items, rec.Body)
+			}
+		})
+	}
+	t.Run("below limit", func(t *testing.T) {
+		s, _ := newServer(t)
+		s.cfg.Index = fakeIndex{n: 1}
+		s.cfg.MaxEdges = 2
+		if rec := post(s, "Bearer "+token, `{"edge":"new"}`); rec.Code != 200 {
+			t.Errorf("code %d", rec.Code)
+		}
+	})
+}
+
+func TestInflightLimit(t *testing.T) {
+	s, _ := newServer(t)
+	s.cfg.InflightWait = 50 * time.Millisecond
+	s.slots = make(chan struct{}, 1)
+	s.slots <- struct{}{} // the only slot is taken
+	rec := post(s, "Bearer "+token, `{"edge":"e1"}`)
+	if rec.Code != 503 || rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("code %d retry-after %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	// Auth is checked before waiting.
+	if rec := post(s, "Bearer bad", `{"edge":"e1"}`); rec.Code != 401 {
+		t.Errorf("unauthenticated got %d, want 401", rec.Code)
+	}
+	// A freed slot lets the request through.
+	<-s.slots
+	if rec := post(s, "Bearer "+token, `{"edge":"e1"}`); rec.Code != 200 {
+		t.Errorf("code %d after slot freed", rec.Code)
+	}
+}
+
+func TestInflightContextCancelled(t *testing.T) {
+	s, _ := newServer(t)
+	s.slots = make(chan struct{}, 1)
+	s.slots <- struct{}{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, CheckinPath, strings.NewReader(`{"edge":"e1"}`)).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 503 {
+		t.Errorf("code %d", rec.Code)
 	}
 }

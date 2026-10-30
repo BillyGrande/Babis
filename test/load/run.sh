@@ -2,6 +2,7 @@
 # Load test: simulated edges against the operator running on the host,
 # with a kind cluster as the API server.
 # Usage: make load   (or: EDGES=500 KEEP=1 bash test/load/run.sh)
+# OPERATOR_FLAGS="--kube-api-qps 100 --kube-api-burst 200" passes extra flags to the operator.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,6 +15,7 @@ EDGES="${EDGES:-1000}"
 APPS="${APPS:-300}"
 ROUNDS="${ROUNDS:-2}"
 SPREAD_B="${SPREAD_B:-60s}"
+SCENARIOS="${SCENARIOS:-A B}"
 HUB=http://127.0.0.1:8090
 OUT=test/load/last-run.json
 WORK="$(mktemp -d)"
@@ -66,7 +68,7 @@ OPLOG=""
 start_operator() {
   OPLOG="$WORK/operator-$1.log"
   bin/babis-operator --leader-elect=false --fleet-namespace="$NS" \
-    --metrics-addr=:18080 --health-addr=:18081 >"$OPLOG" 2>&1 &
+    --metrics-addr=:18080 --health-addr=:18081 ${OPERATOR_FLAGS:-} >"$OPLOG" 2>&1 &
   OP_PID=$!
   for _ in $(seq 60); do
     curl -fsS "$HUB/healthz" >/dev/null 2>&1 && break
@@ -103,8 +105,8 @@ scenario() {
   kubectl delete edges --all -n "$NS" --wait=true >/dev/null
 }
 
-scenario A 0
-scenario B "$SPREAD_B"
+case " $SCENARIOS " in *" A "*) scenario A 0;; esac
+case " $SCENARIOS " in *" B "*) scenario B "$SPREAD_B";; esac
 
 jq --arg d "$(date -u +%FT%TZ)" --arg c "$(git rev-parse --short HEAD)" \
    '{date:$d, commit:$c, scenarios:.}' "$RESULTS" >"$OUT"

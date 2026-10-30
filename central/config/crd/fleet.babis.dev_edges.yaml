@@ -79,6 +79,10 @@ spec:
               conditions; the reconciler writes only conditions.
             properties:
               apps:
+                description: |-
+                  Atomic: ingest sends the whole list on every check-in, so an app that
+                  leaves the report leaves the status. Names are not checked for
+                  duplicates on the wire, so the list is not a keyed map.
                 items:
                   description: App is one ArgoCD Application, with ArgoCD's own values.
                   properties:
@@ -94,6 +98,7 @@ spec:
                   - name
                   type: object
                 type: array
+                x-kubernetes-list-type: atomic
               appsHealthy:
                 type: integer
               appsSynced:
@@ -104,6 +109,7 @@ spec:
                 description: ArgoCDStatus is the observed ArgoCD install.
                 properties:
                   components:
+                    description: 'Atomic: ingest sends the whole list on every check-in.'
                     items:
                       description: Component is one ArgoCD workload.
                       properties:
@@ -121,6 +127,7 @@ spec:
                       - ready
                       type: object
                     type: array
+                    x-kubernetes-list-type: atomic
                   version:
                     type: string
                 type: object
@@ -186,8 +193,11 @@ spec:
               labels:
                 additionalProperties:
                   type: string
-                description: Labels are what the edge reports about itself.
+                description: |-
+                  Labels are what the edge reports about itself. Granular map: a label
+                  that is no longer reported is removed by server-side apply.
                 type: object
+                x-kubernetes-map-type: granular
               lastCheckinTime:
                 description: LastCheckinTime is stamped by central on receipt.
                 format: date-time
