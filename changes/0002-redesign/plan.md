@@ -250,9 +250,26 @@ every fix has a before/after number:
 5. Edge `--jitter DURATION` (CLI default 0; CronJob default `60s`; job
    `activeDeadlineSeconds` 180). Unit test: delay is in `[0, jitter)`.
 6. `deploy/central`: `replicas: 2`; e2e still passes.
+7. (Added after the baseline.) Bounded ingest concurrency: `--max-inflight`
+   (default 64) is taken **before** the body is read, so at most that many
+   bodies are in memory; a request that waits longer than 20 s gets `503`
+   with `Retry-After`. The baseline burst peaked at 299 MB against a 256 Mi
+   limit. Set the memory limit from the measured "after" numbers.
+8. (Added after the baseline.) The reconciler also writes with server-side
+   apply (field manager `babis-reconciler`, owns only `conditions`), which
+   removes the "object has been modified" conflicts seen in the baseline.
 
-**Proof:** `make load` at 1000 edges: 0 errors, p99 < 1 s; numbers before
-and after recorded in this plan.
+**Proof:** `make load` at 1000 edges, numbers before and after recorded in
+this plan:
+
+- Scenario B (spread 60 s — the deployed CronJob jitter): 0 errors, p99 < 1 s.
+- Scenario A (burst — the worst case, every edge with jitter 0): 0 errors
+  (no 5xx, no timeouts) and operator peak RSS below 75 % of its memory limit
+  in `deploy/central`. Latency in A is queueing by design (one API call per
+  check-in under a client rate limit) and is reported, not gated.
+
+(Revised after the baseline: the first draft gated A on p99 < 1 s, which no
+rate-limited write path can meet for 1000 simultaneous requests.)
 
 #### Load test results
 
