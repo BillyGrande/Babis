@@ -116,7 +116,7 @@ APP
     -p "{\"data\":{\"hub\":\"$HUB\",\"edgeName\":\"$EDGE\"}}"
   kubectl -n argocd patch cronjob babis-checkin --type=merge -p '{"spec":{"schedule":"* * * * *"}}'
   kubectl -n argocd patch cronjob babis-checkin --type=json \
-    -p '[{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/6","value":"5s"}]'
+    -p '[{"op":"test","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/5","value":"--jitter"},{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/6","value":"5s"}]'
 
   # 1. Edge appears and is healthy.
   wait_for "edge $EDGE: version $VERSION, appsTotal=3, ArgoCDReady=True, Reachable=True" 240 first_ok
