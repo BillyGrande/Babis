@@ -15,7 +15,7 @@
 | 5. Deploy manifests and images | done | `2ed201a` |
 | 6. End-to-end on kind | done | `84ef30f` + fixes |
 | 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
-| 7. CI | todo | — |
+| 7. CI | done | `c850f93` (PR #1) |
 | 8. Docs | todo | — |
 
 Drift from the original plan, recorded here as CLAUDE.md requires:
