@@ -1,0 +1,42 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: babis-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleet.babis.dev
+  resources:
+  - edges
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - fleet.babis.dev
+  resources:
+  - edges/status
+  verbs:
+  - get
+  - patch
+  - update
