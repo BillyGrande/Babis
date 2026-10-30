@@ -14,7 +14,7 @@
 | 4. Edge (Rust) | done | `10d10bf` |
 | 5. Deploy manifests and images | done | `2ed201a` |
 | 6. End-to-end on kind | done | `84ef30f` + fixes |
-| 6b. Scale hardening (added) | todo | — |
+| 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
 | 7. CI | todo | — |
 | 8. Docs | todo | — |
 
@@ -336,6 +336,16 @@ The baseline column "VmHWM" was in MB (kB/1024, so MiB); same unit here.
   per-request GET/object copy. In the kind setup the load generator and
   operator share the host with the API server, so absolute latencies are
   pessimistic.
+
+**6b follow-ups** (not blocking P1):
+
+- `--max-edges` counts from the informer cache, which can lag a few creates,
+  so a burst of new edges can overshoot the cap slightly. Document it in the
+  flag help and `deploy/README.md` (step 8).
+- `make load` spends ~7 of its ~10 min in `kubectl delete edges --all`.
+  Recreate the `babis-fleet` namespace between scenarios instead.
+- The heartbeat/status split ([spec § Beyond 5000](spec.md#beyond-5000-the-heartbeatstatus-split))
+  waits for a 5000-edge load run that shows the need.
 
 ### 7. CI
 
