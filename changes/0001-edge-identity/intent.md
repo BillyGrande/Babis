@@ -1,7 +1,7 @@
 # Intent: edge identity from one source
 
 - **Author:** BillyGrande (draft by Claude)
-- **Status:** Draft — awaiting review
+- **Status:** Superseded by [0002-redesign](../0002-redesign/intent.md) — identity labels are folded into its spec
 - **Date:** 2026-10-30
 - **Roadmap:** [v0.2 — Babis learns names](../../docs/roadmap.md#v02--babis-learns-names-edge-identity)
 - **Design notes:** [architecture.md § Edge identity](../../docs/architecture.md#edge-identity-and-the-in-cluster-secret-planned)

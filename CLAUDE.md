@@ -28,6 +28,7 @@ Complements — does not replace — [argocd-agent]. Read `docs/positioning.md`
 
 ## Design Rules
 
+- **ArgoCD-only, by design.** No abstraction over other GitOps engines (no Flux support, no generic layer). Prefer ArgoCD's own integration points — Application status, the cluster secret, notifications, the upstream install manifests/chart — over new Babis mechanisms.
 - **Outbound-only edges.** Nothing may require central to reach an edge.
 - **CLI on edges, operator centrally.** Single static binary via cron/systemd, no resident agent. Long-lived reconciliation lives in the operator.
 - **CRDs are the state store.** Fleet state is Edge status, not a database; history would be a separate consumer.
