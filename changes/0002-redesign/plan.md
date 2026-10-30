@@ -14,7 +14,7 @@
 | 4. Edge (Rust) | done | `10d10bf` |
 | 5. Deploy manifests and images | done | `2ed201a` |
 | 6. End-to-end on kind | done | `84ef30f` + fixes |
-| 6b. Scale hardening (added) | todo | — |
+| 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
 | 7. CI | todo | — |
 | 8. Docs | todo | — |
 
@@ -244,15 +244,108 @@ every fix has a before/after number:
    `babis-ingest`; no GET; on 404, create the Edge and apply again).
    Handler tests: concurrent check-ins for one edge, removed label
    disappears, conditions untouched.
-3. Ingest client flags `--kube-api-qps` (50) and `--kube-api-burst` (100).
+3. Client flags `--kube-api-qps` and `--kube-api-burst` on the rest config
+   (manager and ingest client). Defaults -1 / 0 = client-side limiting
+   disabled (controller-runtime's own default); a positive QPS enables it.
 4. `--max-edges` (2000): a new edge beyond the limit gets `429`, existing
    edges keep working. Handler test.
 5. Edge `--jitter DURATION` (CLI default 0; CronJob default `60s`; job
    `activeDeadlineSeconds` 180). Unit test: delay is in `[0, jitter)`.
 6. `deploy/central`: `replicas: 2`; e2e still passes.
+7. (Added after the baseline.) Bounded ingest concurrency: `--max-inflight`
+   (default 64) is taken **before** the body is read, so at most that many
+   bodies are in memory; a request that waits longer than 20 s gets `503`
+   with `Retry-After`. The baseline burst peaked at 299 MB against a 256 Mi
+   limit. Set the memory limit from the measured "after" numbers.
+8. (Added after the baseline.) The reconciler also writes with server-side
+   apply (field manager `babis-reconciler`, owns only `conditions`), which
+   removes the "object has been modified" conflicts seen in the baseline.
 
-**Proof:** `make load` at 1000 edges: 0 errors, p99 < 1 s; numbers before
-and after recorded in this plan.
+**Proof:** `make load` at 1000 edges, numbers before and after recorded in
+this plan:
+
+- Scenario B (spread 60 s — the deployed CronJob jitter): 0 errors, p99 < 1 s.
+- Scenario A (burst — the worst case, every edge with jitter 0): 0 errors
+  (no 5xx, no timeouts) and operator peak RSS below 75 % of its memory limit
+  in `deploy/central`. Latency in A is queueing by design (one API call per
+  check-in under a client rate limit) and is reported, not gated.
+
+(Revised after the baseline: the first draft gated A on p99 < 1 s, which no
+rate-limited write path can meet for 1000 simultaneous requests.)
+
+#### Load test results
+
+Location drift: the generator lives in `central/cmd/babis-loadgen`, not
+`test/load/`, because it imports `central/internal/wire`. `test/load/run.sh`
+drives it (`make load`). The script builds only the operator and the
+generator (not the edge) and starts a fresh operator per scenario, so
+`VmHWM` and the log count are per scenario.
+
+**Baseline** (before any 6b fix). 2026-10-30, commit `0b011e6`, WSL2 +
+kind (operator on the host, kind API server), 1000 edges, 300 apps each,
+2 rounds, 30 s client timeout. Run time about 10 min (mostly deleting the
+Edges between scenarios).
+
+| Scenario | Round | OK / errors | p50 | p99 | max | Wall | Edges | Operator VmHWM |
+|---|---|---|---|---|---|---|---|---|
+| A burst (spread 0) | 1 | 1000 / 0 | 3279 ms | 8058 ms | 8106 ms | 8.1 s | 1000 | 299 MB |
+| A burst | 2 | 1000 / 0 | 2825 ms | 5422 ms | 5460 ms | 5.4 s | 1000 | 299 MB |
+| B spread 60 s | 1 | 1000 / 0 | 38 ms | 112 ms | 139 ms | 60.0 s | 1000 | 108 MB |
+| B spread 60 s | 2 | 1000 / 0 | 24 ms | 82 ms | 101 ms | 59.9 s | 1000 | 108 MB |
+
+Findings:
+
+- The burst gave no request errors (all 200), but latency is 3-8 s. This is
+  API-server/etcd write throughput: controller-runtime v0.25.2 already
+  disables client-side throttling (QPS -1 when unset; it relies on API
+  Priority and Fairness), so there is no client limiter. The 30 s timeout
+  was not reached. Burst p99 is far above the 1 s target; spread p99 is
+  already below it.
+- The operator logged 7 `Reconciler error` lines in A (0 in B): `the object
+  has been modified` conflicts on the Edge status update, and one `context
+  canceled` at shutdown. They are retried and harmless, but show the
+  reconciler and ingest compete for the same status.
+- `VmHWM` of 299 MB in the burst comes from caching 1000 Edges with 300 apps
+  each plus 1000 buffered request bodies. Watch it after SSA (step 2).
+
+**After** (step 6b, 2026-10-30, same setup as the baseline: 1000 edges,
+300 apps, 2 rounds, 30 s client timeout; ingest and reconciler on
+server-side apply, `--max-inflight 64`, client limiting disabled).
+
+| Scenario | Round | OK / errors | p50 | p99 | max | Wall | Edges | Operator VmHWM |
+|---|---|---|---|---|---|---|---|---|
+| A burst (spread 0) | 1 | 1000 / 0 | 2367 ms | 4480 ms | 4540 ms | 4.5 s | 1000 | 117 MiB |
+| A burst | 2 | 1000 / 0 | 2949 ms | 5658 ms | 5683 ms | 5.7 s | 1000 | 117 MiB |
+| B spread 60 s | 1 | 1000 / 0 | 38 ms | 122 ms | 180 ms | 60.0 s | 1000 | 107 MiB |
+| B spread 60 s | 2 | 1000 / 0 | 30 ms | 115 ms | 153 ms | 60.0 s | 1000 | 107 MiB |
+
+The baseline column "VmHWM" was in MB (kB/1024, so MiB); same unit here.
+
+- Reconciler errors: 0 in B; 1 in A, a `context canceled` at shutdown (the
+  baseline's 7 `object has been modified` conflicts are gone).
+- Proof: B 0 errors, p99 122 ms < 1 s: met. A 0 errors, peak 117 MiB =
+  61 % of the 192 Mi limit (< 75 %): met. A latency (p99 about 5 s) is
+  queueing on API-server write throughput and is reported, not gated.
+- Memory limit: 192Mi (117 / 0.75 = 156, rounded up), request 128Mi.
+- Defaults: `--max-inflight 64` and `--max-edges 2000` as planned.
+  `--kube-api-qps` -1 / `--kube-api-burst` 0 (limiting off): with the
+  limiter on, a 1000-edge burst at 50 QPS exceeded the 20 s inflight wait and
+  returned 503 (first trial, before this default was changed); the
+  limiter only adds queueing in front of the API server's own limits.
+- Burst peak RSS fell from 299 MB to 117 MiB: the in-flight bound and no
+  per-request GET/object copy. In the kind setup the load generator and
+  operator share the host with the API server, so absolute latencies are
+  pessimistic.
+
+**6b follow-ups** (not blocking P1):
+
+- `--max-edges` counts from the informer cache, which can lag a few creates,
+  so a burst of new edges can overshoot the cap slightly. Document it in the
+  flag help and `deploy/README.md` (step 8).
+- `make load` spends ~7 of its ~10 min in `kubectl delete edges --all`.
+  Recreate the `babis-fleet` namespace between scenarios instead.
+- The heartbeat/status split ([spec § Beyond 5000](spec.md#beyond-5000-the-heartbeatstatus-split))
+  waits for a 5000-edge load run that shows the need.
 
 ### 7. CI
 

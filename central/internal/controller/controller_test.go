@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +167,60 @@ func TestReconcileMissingEdge(t *testing.T) {
 	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "fleet", Name: "gone"}})
 	if err != nil || res.RequeueAfter != 0 {
 		t.Errorf("got %v, %v; want no error, no requeue", res, err)
+	}
+}
+
+func TestReconcileKeepsIngestFields(t *testing.T) {
+	now := t0.Add(time.Minute)
+	last := metav1.NewTime(t0)
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	edge := v1alpha1.Edge{
+		ObjectMeta: metav1.ObjectMeta{Name: "e1", Namespace: "fleet"},
+		Status: v1alpha1.EdgeStatus{
+			LastCheckinTime: &last,
+			Telemetry:       v1alpha1.Telemetry{Source: "checkin"},
+			Labels:          map[string]string{"region": "gr"},
+			ArgoCD:          v1alpha1.ArgoCDStatus{Version: "v3", Components: []v1alpha1.Component{{Name: "a", Ready: 1, Desired: 1}}},
+			Apps:            []v1alpha1.App{{Name: "x", Sync: "Synced", Health: "Healthy"}},
+			AppsTotal:       1, AppsSynced: 1, AppsHealthy: 1,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.Edge{}).WithObjects(&edge).Build()
+	r := &EdgeReconciler{Client: c, DefaultHeartbeatTimeout: 15 * time.Minute, Now: func() time.Time { return now }}
+	key := types.NamespacedName{Namespace: "fleet", Name: "e1"}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	var got v1alpha1.Edge
+	if err := c.Get(context.Background(), key, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Status.Conditions) != 2 {
+		t.Fatalf("conditions: %+v", got.Status.Conditions)
+	}
+	want := edge.Status
+	want.Conditions = got.Status.Conditions
+	// The fake client's apply resets the three integer counters of unowned
+	// fields (a fake-client quirk; the API server keeps unowned fields, which
+	// the e2e covers), so they are left out of this comparison.
+	got.Status.LastCheckinTime, want.LastCheckinTime = nil, nil
+	got.Status.AppsTotal, got.Status.AppsSynced, got.Status.AppsHealthy = 0, 0, 0
+	want.AppsTotal, want.AppsSynced, want.AppsHealthy = 0, 0, 0
+	if !equality.Semantic.DeepEqual(got.Status, want) {
+		t.Errorf("ingest-owned status changed:\n got %+v\nwant %+v", got.Status, want)
+	}
+	if got.Status.Labels["region"] != "gr" || len(got.Status.Apps) != 1 || got.Status.ArgoCD.Version != "v3" {
+		t.Errorf("fields lost: %+v", got.Status)
+	}
+	// The body the reconciler sends has no ingest fields.
+	b, _ := json.Marshal(buildConditionsApply(&got, got.Status.Conditions))
+	var m map[string]map[string]any
+	_ = json.Unmarshal(b, &m)
+	if len(m["status"]) != 1 {
+		t.Errorf("apply status has more than conditions: %s", b)
 	}
 }

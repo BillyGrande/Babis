@@ -18,6 +18,7 @@ import (
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/BillyGrande/babis/central/api/v1alpha1"
@@ -43,6 +44,17 @@ type Config struct {
 	Namespace string
 	// Client should read without a stale cache, so a create is visible at once.
 	Client client.Client
+	// Index answers "is this edge known" and "how many edges". Normally the
+	// manager cache. Nil disables the --max-edges check.
+	Index EdgeIndex
+	// MaxEdges caps the fleet; a check-in from a new edge beyond it gets 429.
+	// Default 2000.
+	MaxEdges int
+	// MaxInflight bounds the check-ins that are being read or written at once.
+	// Default 64.
+	MaxInflight int
+	// InflightWait is how long a request waits for a slot. Default 20 s.
+	InflightWait time.Duration
 	// Now is the clock. Defaults to time.Now.
 	Now func() time.Time
 	// Log is optional.
@@ -53,6 +65,13 @@ type Config struct {
 type Server struct {
 	cfg       Config
 	tokenHash [sha256.Size]byte
+	slots     chan struct{}
+}
+
+// EdgeIndex is a cheap, cached view of the Edges that exist.
+type EdgeIndex interface {
+	Has(namespace, name string) bool
+	Count() int
 }
 
 // New builds a Server. It refuses an empty token unless InsecureNoAuth is set.
@@ -69,7 +88,19 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Log.GetSink() == nil {
 		cfg.Log = logr.Discard()
 	}
-	return &Server{cfg: cfg, tokenHash: sha256.Sum256([]byte(cfg.Token))}, nil
+	if cfg.MaxEdges <= 0 {
+		cfg.MaxEdges = 2000
+	}
+	if cfg.MaxInflight <= 0 {
+		cfg.MaxInflight = 64
+	}
+	if cfg.InflightWait <= 0 {
+		cfg.InflightWait = 20 * time.Second
+	}
+	return &Server{
+		cfg: cfg, tokenHash: sha256.Sum256([]byte(cfg.Token)),
+		slots: make(chan struct{}, cfg.MaxInflight),
+	}, nil
 }
 
 // NeedLeaderElection reports false: every replica accepts check-ins.
@@ -123,6 +154,22 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 		return
 	}
+	// Take a slot before the body is read, so at most MaxInflight bodies
+	// are in memory.
+	wait := time.NewTimer(s.cfg.InflightWait)
+	defer wait.Stop()
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-wait.C:
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, "too many check-ins in flight; retry later")
+		return
+	case <-r.Context().Done():
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, "request cancelled while waiting")
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
 	if err != nil {
 		var tooBig *http.MaxBytesError
@@ -140,6 +187,10 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := req.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.cfg.Index != nil && !s.cfg.Index.Has(s.cfg.Namespace, req.Edge) && s.cfg.Index.Count() >= s.cfg.MaxEdges {
+		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("fleet is full (%d edges); new edges are refused", s.cfg.MaxEdges))
 		return
 	}
 	if err := s.record(r.Context(), &req); err != nil {
@@ -162,30 +213,42 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
-// record registers the Edge if needed, then patches every status field except
-// conditions. It never writes spec or metadata.labels.
-func (s *Server) record(ctx context.Context, req *wire.CheckinRequest) error {
-	key := client.ObjectKey{Namespace: s.cfg.Namespace, Name: req.Edge}
-	var edge v1alpha1.Edge
-	err := s.cfg.Client.Get(ctx, key, &edge)
-	if apierrors.IsNotFound(err) {
-		edge = v1alpha1.Edge{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name}}
-		err = s.cfg.Client.Create(ctx, &edge)
-		if apierrors.IsAlreadyExists(err) {
-			err = s.cfg.Client.Get(ctx, key, &edge)
-		}
-	}
-	if err != nil {
-		return err
-	}
+// fieldManager owns every status field except conditions.
+const fieldManager = "babis-ingest"
 
-	base := edge.DeepCopy()
-	now := metav1.NewTime(s.cfg.Now())
-	st := &edge.Status
-	st.LastCheckinTime = &now
-	st.Telemetry.Source = v1alpha1.TelemetrySourceCheckin
-	st.Labels = req.Labels
-	st.ArgoCD = v1alpha1.ArgoCDStatus{}
+// applyEdge is the server-side apply body: identity plus the status fields
+// ingest owns. It has no conditions, so the reconciler's fields are untouched.
+type applyEdge struct {
+	APIVersion string      `json:"apiVersion"`
+	Kind       string      `json:"kind"`
+	Metadata   applyMeta   `json:"metadata"`
+	Status     applyStatus `json:"status"`
+}
+
+type applyMeta struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type applyStatus struct {
+	LastCheckinTime metav1.Time           `json:"lastCheckinTime"`
+	Telemetry       v1alpha1.Telemetry    `json:"telemetry"`
+	Labels          map[string]string     `json:"labels,omitempty"`
+	ArgoCD          v1alpha1.ArgoCDStatus `json:"argocd"`
+	Apps            []v1alpha1.App        `json:"apps,omitempty"`
+	AppsTotal       int                   `json:"appsTotal"`
+	AppsSynced      int                   `json:"appsSynced"`
+	AppsHealthy     int                   `json:"appsHealthy"`
+}
+
+// buildApply maps a check-in to the apply body. It is pure.
+func buildApply(namespace string, req *wire.CheckinRequest, now time.Time) applyEdge {
+	st := applyStatus{
+		LastCheckinTime: metav1.NewTime(now),
+		Telemetry:       v1alpha1.Telemetry{Source: v1alpha1.TelemetrySourceCheckin},
+		Labels:          req.Labels,
+		AppsTotal:       len(req.Apps),
+	}
 	if req.ArgoCD != nil {
 		st.ArgoCD.Version = req.ArgoCD.Version
 		for _, c := range req.ArgoCD.Components {
@@ -194,8 +257,6 @@ func (s *Server) record(ctx context.Context, req *wire.CheckinRequest) error {
 			})
 		}
 	}
-	st.Apps = nil
-	st.AppsTotal, st.AppsSynced, st.AppsHealthy = len(req.Apps), 0, 0
 	for _, a := range req.Apps {
 		st.Apps = append(st.Apps, v1alpha1.App{Name: a.Name, Sync: a.Sync, Health: a.Health, Revision: a.Revision})
 		if a.Sync == "Synced" {
@@ -205,7 +266,40 @@ func (s *Server) record(ctx context.Context, req *wire.CheckinRequest) error {
 			st.AppsHealthy++
 		}
 	}
-	return s.cfg.Client.Status().Patch(ctx, &edge, client.MergeFrom(base))
+	return applyEdge{
+		APIVersion: v1alpha1.GroupVersion.String(),
+		Kind:       "Edge",
+		Metadata:   applyMeta{Name: req.Edge, Namespace: namespace},
+		Status:     st,
+	}
+}
+
+// record applies the status with server-side apply: one call, no GET. When the
+// Edge does not exist it creates it (an existing one is fine) and applies again.
+// It never writes spec, metadata.labels or conditions.
+func (s *Server) record(ctx context.Context, req *wire.CheckinRequest) error {
+	body, err := json.Marshal(buildApply(s.cfg.Namespace, req, s.cfg.Now()))
+	if err != nil {
+		return err
+	}
+	edge := &v1alpha1.Edge{ObjectMeta: metav1.ObjectMeta{Namespace: s.cfg.Namespace, Name: req.Edge}}
+	apply := func() error {
+		return s.cfg.Client.Status().Patch(ctx, edge.DeepCopy(),
+			client.RawPatch(types.ApplyPatchType, body),
+			client.FieldOwner(fieldManager), client.ForceOwnership)
+	}
+	// The cache says the Edge is new: create first and skip an apply that would
+	// get NotFound. A stale cache is harmless (AlreadyExists is fine).
+	if s.cfg.Index == nil || s.cfg.Index.Has(s.cfg.Namespace, req.Edge) {
+		err = apply()
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	if err := s.cfg.Client.Create(ctx, edge); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return apply()
 }
 
 func clamp32(v *int64) int32 {
