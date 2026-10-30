@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://babis.dev/schemas/v1alpha1/checkin.response.json",
+  "title": "Babis check-in response",
+  "description": "Body of the 200 response to POST /api/v1alpha1/checkin. In P1 it is always empty. desired and extensions are opaque to this contract; unknown fields are allowed at every level.",
+  "type": "object",
+  "required": ["generation", "desired"],
+  "additionalProperties": true,
+  "properties": {
+    "generation": {"type": "integer", "minimum": 0},
+    "desired": {"type": "object", "additionalProperties": true},
+    "extensions": {"type": "object", "additionalProperties": true}
+  }
+}

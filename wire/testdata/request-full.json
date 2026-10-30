@@ -1,0 +1,48 @@
+{
+  "edge": "shop-athens-042",
+  "labels": {
+    "region": "gr-north",
+    "tier": "store",
+    "example.com/site": "athens-042"
+  },
+  "argocd": {
+    "version": "v3.2.0",
+    "components": [
+      {
+        "name": "argocd-application-controller",
+        "ready": 1,
+        "desired": 1
+      },
+      {
+        "name": "argocd-repo-server",
+        "ready": 2,
+        "desired": 2
+      },
+      {
+        "name": "argocd-server",
+        "ready": 0,
+        "desired": 1
+      }
+    ]
+  },
+  "apps": [
+    {
+      "name": "pos",
+      "sync": "Synced",
+      "health": "Healthy",
+      "revision": "a1b2c3d"
+    },
+    {
+      "name": "inventory",
+      "sync": "OutOfSync",
+      "health": "Progressing",
+      "revision": "9f8e7d6"
+    },
+    {
+      "name": "monitoring",
+      "sync": "Unknown",
+      "health": "Degraded",
+      "revision": ""
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"generation":4,"desired":{"argocd":{"chartVersion":"9.1.0"},"labels":{"region":"gr-south"},"somethingNew":[1,2]},"extensions":{"hauler":{"enabled":true}}}

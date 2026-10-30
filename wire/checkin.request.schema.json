@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://babis.dev/schemas/v1alpha1/checkin.request.json",
+  "title": "Babis check-in request",
+  "description": "Body of POST /api/v1alpha1/checkin. Unknown fields are allowed at every level (forward compatibility). All rules except the label-prefix length limit are expressed in this schema; all rules are enforced in code.",
+  "type": "object",
+  "required": [
+    "edge"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "edge": {
+      "description": "Edge name. DNS-1123 subdomain: dot-separated labels of lowercase a-z, 0-9 and '-', each starting and ending alphanumeric; 1..253 chars.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "labels": {
+      "description": "Kubernetes-style labels. Key is an optional DNS-1123 subdomain prefix (max 253) plus '/', then a name (1..63). Value is empty or 1..63 chars. Keys whose prefix is, or is a subdomain of, argocd.argoproj.io, babis.dev, kubernetes.io or k8s.io are reserved and rejected. The prefix length limit (253) is enforced in code only; the schema bounds the whole key to 317 chars.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$",
+        "not": {
+          "pattern": "^(.*[.])?(argocd[.]argoproj[.]io|babis[.]dev|kubernetes[.]io|k8s[.]io)/"
+        },
+        "maxLength": 317
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 63,
+        "pattern": "^([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?$"
+      }
+    },
+    "argocd": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "ready",
+              "desired"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "ready": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "desired": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "apps": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "sync": {
+            "type": "string"
+          },
+          "health": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

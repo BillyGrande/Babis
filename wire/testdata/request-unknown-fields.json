@@ -1,0 +1,25 @@
+{
+  "edge": "e1",
+  "future": {
+    "x": 1
+  },
+  "argocd": {
+    "version": "v3.2.0",
+    "distribution": "helm",
+    "components": [
+      {
+        "name": "argocd-server",
+        "ready": 1,
+        "desired": 1,
+        "restarts": 3
+      }
+    ]
+  },
+  "apps": [
+    {
+      "name": "pos",
+      "sync": "Synced",
+      "operation": "none"
+    }
+  ]
+}

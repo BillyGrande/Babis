@@ -1,0 +1,12 @@
+{
+  "edge": "e1",
+  "argocd": {
+    "components": [
+      {
+        "name": "c",
+        "ready": -1,
+        "desired": 1
+      }
+    ]
+  }
+}

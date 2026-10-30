@@ -5,7 +5,7 @@ X86            := x86_64-unknown-linux-musl
 ARM64          := aarch64-unknown-linux-musl
 
 .PHONY: all check central-check edge-check fmt build build-edge-arm64 \
-	generate manifests images e2e clean
+	generate manifests images e2e contract clean
 
 all: check build
 
@@ -22,6 +22,10 @@ edge-check:
 	cd edge && cargo fmt --check
 	cd edge && cargo clippy --all-targets -- -D warnings
 	cd edge && cargo test
+
+contract:
+	cd central && go test ./internal/wire -run Contract
+	cd edge && cargo test --test contract
 
 fmt:
 	cd central && gofmt -w .
