@@ -5,7 +5,7 @@ X86            := x86_64-unknown-linux-musl
 ARM64          := aarch64-unknown-linux-musl
 
 .PHONY: all check central-check edge-check fmt build build-edge-arm64 \
-	generate manifests images e2e contract clean
+	generate manifests images e2e contract edge-budget clean
 
 all: check build
 
@@ -42,6 +42,15 @@ build-edge-arm64:
 	cd edge && cargo zigbuild --release --target $(ARM64)
 	mkdir -p bin
 	cp edge/target/$(ARM64)/release/babis bin/babis-linux-arm64
+
+# Release musl binary must be <= 3 MB and peak RSS <= 5 MB at 300 Applications.
+edge-budget:
+	cd edge && cargo zigbuild --release --target $(X86)
+	@size=$$(stat -c %s edge/target/$(X86)/release/babis); \
+	echo "binary: $$size bytes"; \
+	if [ "$$size" -gt 3000000 ]; then echo "FAIL: binary > 3 MB"; exit 1; fi
+	mkdir -p edge/target/budget
+	python3 -I test/budget/run.py edge/target/$(X86)/release/babis edge/target/budget 5 5120
 
 generate:
 	@echo "not implemented yet (plan step 3)"; exit 1
