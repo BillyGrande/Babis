@@ -75,11 +75,11 @@ type EdgeStatus struct {
 	// +optional
 	Apps []App `json:"apps,omitempty"`
 	// +optional
-	AppsTotal int `json:"appsTotal,omitempty"`
+	AppsTotal int `json:"appsTotal"`
 	// +optional
-	AppsSynced int `json:"appsSynced,omitempty"`
+	AppsSynced int `json:"appsSynced"`
 	// +optional
-	AppsHealthy int `json:"appsHealthy,omitempty"`
+	AppsHealthy int `json:"appsHealthy"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

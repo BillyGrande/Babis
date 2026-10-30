@@ -1,8 +1,37 @@
 # Plan: P1 — Telemetry
 
-- **Status:** Draft — awaiting review
+- **Status:** Accepted 2026-10-30 — in progress (steps 1–6 done)
 - **Date:** 2026-10-30
-- **Spec:** [spec.md § P1](spec.md#p1--telemetry), [§ Language decision](spec.md#language-decision)
+- **Spec:** [spec.md § P1](spec.md#p1--telemetry), [§ Scale](spec.md#scale), [§ Language decision](spec.md#language-decision)
+
+## Progress
+
+| Step | State | Commit |
+|---|---|---|
+| 1. Skeleton and toolchains | done | `a14359d` |
+| 2. Wire contract | done | `2652941` |
+| 3. Central (Go) | done | `a847e71` |
+| 4. Edge (Rust) | done | `10d10bf` |
+| 5. Deploy manifests and images | done | `2ed201a` |
+| 6. End-to-end on kind | done | `84ef30f` + fixes |
+| 6b. Scale hardening (added) | todo | — |
+| 7. CI | todo | — |
+| 8. Docs | todo | — |
+
+Drift from the original plan, recorded here as CLAUDE.md requires:
+
+- **Strict DNS-1123** for edge names and label prefixes (step 2): the first
+  draft accepted `a..b`, which Kubernetes rejects as an object name.
+- **`ArgoCDReady` is `Unknown` while `Reachable=False`** (step 3): the last
+  reported components of a silent edge may be stale. Spec updated.
+- **Operator `/readyz`** was missing (found by the step 6 e2e): the Pod never
+  became Ready. Fixed in `main.go`.
+- **App counts always serialized** (no `omitempty`): `0` printed as an empty
+  column in `kubectl get edges`.
+- **ArgoCD versions pinned in e2e:** v3.5.6 (newest) and v3.3.18 (oldest
+  supported), checked 2026-10-30.
+- **Scale hardening (step 6b)** added after the 500+ edges review; see
+  [spec § Scale](spec.md#scale).
 
 Goal: a central hub that monitors existing ArgoCD installations. Edges run
 a read-only Rust `babis checkin` from a CronJob; a Go operator turns
@@ -202,6 +231,29 @@ script, see [spec § ArgoCD coupling](spec.md#argocd-coupling)):
 
 **Proof:** script exits 0 locally and in CI.
 
+### 6b. Scale hardening (500+ edges)
+
+From [spec § Scale](spec.md#scale). In this order — the load test first, so
+every fix has a before/after number:
+
+1. `test/load/`: Go load generator, N simulated edges (default 1000, 300
+   apps each), jittered over one interval, against the kind e2e operator.
+   Reports p50/p99 latency, error count, and operator RSS. `make load`.
+   Run it on the current code and record the baseline.
+2. Ingest writes status with server-side apply (field manager
+   `babis-ingest`; no GET; on 404, create the Edge and apply again).
+   Handler tests: concurrent check-ins for one edge, removed label
+   disappears, conditions untouched.
+3. Ingest client flags `--kube-api-qps` (50) and `--kube-api-burst` (100).
+4. `--max-edges` (2000): a new edge beyond the limit gets `429`, existing
+   edges keep working. Handler test.
+5. Edge `--jitter DURATION` (CLI default 0; CronJob default `60s`; job
+   `activeDeadlineSeconds` 180). Unit test: delay is in `[0, jitter)`.
+6. `deploy/central`: `replicas: 2`; e2e still passes.
+
+**Proof:** `make load` at 1000 edges: 0 errors, p99 < 1 s; numbers before
+and after recorded in this plan.
+
 ### 7. CI
 
 `.github/workflows/ci.yml` jobs: `central` (Go check + generated-files
@@ -247,7 +299,9 @@ Not part of this plan's done criteria; listed so P1 does not block it.
 | Ingest and reconciler both patch status | Ingest never writes `conditions`; reconciler writes only `conditions` |
 | `ring` needs a C toolchain for musl builds | `build-base` in the builder image; `cargo-zigbuild` for cross |
 | Rust toolchain missing locally | rustup with approval, or docker builds |
-| Shared token leaks | Accepted for P1: central can change nothing; per-edge tokens before P3 |
+| Shared token leaks | Accepted for P1: central can change nothing; `--max-edges` caps junk registrations (6b); per-edge tokens before P3 |
+| Synchronized CronJobs at 500+ edges | Edge `--jitter`, ingest QPS flags, SSA writes (6b) |
+| Worktree subagents start from `main`, not the working branch | Tell them to reset to the branch first (happened twice; see CLAUDE.md) |
 
 ## Out of scope for P1
 
@@ -262,5 +316,6 @@ auth, extensions, metrics, release automation and signing.
 | 2 | Sonnet subagent; main session reviews the schemas |
 | 3 (Go) and 4 (Rust) | two Sonnet subagents in parallel worktrees |
 | 5, 6 | Sonnet subagent |
+| 6b | Sonnet subagent(s): load test first, then central and edge in parallel |
 | 8 | Sonnet subagent |
 | Review, budgets, e2e verification, integration | main session (Opus) |

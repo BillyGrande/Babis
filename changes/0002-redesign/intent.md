@@ -1,7 +1,7 @@
 # Intent: Babis as a hub for autonomous ArgoCD edges
 
 - **Author:** BillyGrande (draft by Claude)
-- **Status:** Draft — awaiting review
+- **Status:** Accepted 2026-10-30 — P1 in progress
 - **Date:** 2026-10-30
 - **Supersedes:** [0001-edge-identity](../0001-edge-identity/intent.md) (folded in)
 - **Spec:** [spec.md](spec.md)
@@ -73,6 +73,8 @@ Done looks like:
 - **Central runs anywhere.** Any Kubernetes cluster, cloud or on-prem.
 - **Air-gapped edges:** bootstrap only. Telemetry is not required.
 - **Small steps.** Each phase is useful alone.
+- **Fleet size.** 500 edges is the P1 baseline; nothing in the design may
+  block 5000.
 
 ## Out of scope (for now)
 

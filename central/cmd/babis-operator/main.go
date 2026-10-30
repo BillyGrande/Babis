@@ -111,5 +111,8 @@ func run() error {
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return err
 	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		return err
+	}
 	return mgr.Start(ctrl.SetupSignalHandler())
 }

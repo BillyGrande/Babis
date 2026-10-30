@@ -1,6 +1,6 @@
 # Spec: Babis core design (v0)
 
-- **Status:** Draft — awaiting review
+- **Status:** Accepted for P1 (2026-10-30). P1b–P4 sections are drafts until their own review.
 - **Date:** 2026-10-30
 - **Intent:** [intent.md](intent.md)
 
@@ -354,6 +354,26 @@ are two producers; a script or CI job that speaks the schema is a third.
 Wire rules: additive only after the first release; unknown fields ignored
 on both sides; `desired`, `generation`, `extensions` reserved now so P3 and
 P4 are not breaking changes.
+
+## Scale
+
+Target: **500 edges** at the default 5-minute interval is the P1 baseline.
+Nothing in the design may block **5000**.
+
+Volume is small: 500 edges is 1.7 check-ins/s; with 300 apps per edge the
+status is ~30 KB per Edge, so ~15 MB in etcd and in the operator cache. The
+risks are bursts and the write path, not volume:
+
+| Risk | Design (P1, plan step 6b) |
+|---|---|
+| Every CronJob fires in the same second (`*/5`). Ingest calls are throttled by the client-side QPS limit (controller-runtime default 20, burst 30), so a burst of 500 waits ~50 s and edges hit their 30 s timeout. | Edge `--jitter` (random delay before it observes; CronJob default 60 s). Ingest flags `--kube-api-qps` / `--kube-api-burst` (defaults 50 / 100). |
+| Each check-in does an uncached GET plus a diff-based merge patch: two API calls, and a stale or concurrent view can drop a change. | Ingest writes status with **server-side apply** (field manager `babis-ingest`), owning every status field except `conditions`. One call, no GET, correct under concurrent writers. On `404`, create the Edge, then apply. |
+| One leaked shared token can register unlimited Edges and fill etcd. | `--max-edges` (default 2000): a new edge beyond the limit gets `429`; known edges keep working. Per-edge tokens stay the P3 gate. |
+| One ingest replica. | Ingest needs no leader election and SSA is safe with several writers, so `replicas: 2` behind the Service. Only the leader reconciles. |
+| No evidence. | `test/load/`: N simulated edges (default 1000, 300 apps each, jittered) against the kind operator. Pass: 0 errors, p99 < 1 s, operator RSS recorded. |
+
+Later, only if the load test shows the need: gzip request bodies, and moving
+`status.apps` out of the Edge object (for edges with thousands of apps).
 
 ## ArgoCD coupling
 
