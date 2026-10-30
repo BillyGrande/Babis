@@ -34,6 +34,8 @@ fn main() -> ExitCode {
         Ok(k) => k,
         Err(e) => return fail(e),
     };
+    let wait = babis::delay(args.jitter, babis::random_u64());
+    std::thread::sleep(wait);
     let cfg = Config {
         hub: args.hub,
         hub_ca_pem,
@@ -54,6 +56,7 @@ fn main() -> ExitCode {
                     "apps": sent.apps,
                     "components": sent.components,
                     "durationMs": sent.duration_ms,
+                    "jitterMs": wait.as_millis() as u64,
                 })
             );
             ExitCode::SUCCESS

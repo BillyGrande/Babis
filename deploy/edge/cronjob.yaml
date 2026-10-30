@@ -10,7 +10,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 120
+      activeDeadlineSeconds: 180
       template:
         spec:
           restartPolicy: Never
@@ -28,6 +28,8 @@ spec:
                 - $(BABIS_HUB)
                 - --edge-name
                 - $(BABIS_EDGE_NAME)
+                - --jitter
+                - 60s
               env:
                 - name: BABIS_HUB
                   valueFrom:
