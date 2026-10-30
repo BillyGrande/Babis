@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: babis-operator
+  namespace: babis-system
+  labels:
+    app.kubernetes.io/name: babis-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: babis-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: babis-operator
+    spec:
+      serviceAccountName: babis-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: babis-operator
+          args:
+            - --fleet-namespace=babis-fleet
+          env:
+            - name: BABIS_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: babis-ingest-token
+                  key: token
+          ports:
+            - name: ingest
+              containerPort: 8090
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault

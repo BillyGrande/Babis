@@ -6,7 +6,7 @@ X86            := x86_64-unknown-linux-musl
 ARM64          := aarch64-unknown-linux-musl
 
 .PHONY: all check central-check edge-check fmt build build-edge-arm64 \
-	generate manifests images e2e contract edge-budget clean
+	generate manifests images images-arm64 e2e contract edge-budget clean
 
 all: check build
 
@@ -60,11 +60,18 @@ manifests:
 	cd central && $(CONTROLLER_GEN) crd rbac:roleName=babis-operator paths=./... \
 		output:crd:dir=config/crd output:rbac:dir=config/rbac
 
-images:
-	@echo "not implemented yet (plan step 5)"; exit 1
+images: build
+	docker build -f images/edge.Dockerfile -t babis-edge:dev .
+	docker build -f images/central.Dockerfile -t babis-operator:dev .
+
+images-arm64: build-edge-arm64
+	@docker buildx version >/dev/null 2>&1 || { echo "SKIP: docker buildx not available"; exit 0; }; \
+	docker buildx build --platform linux/arm64 --build-arg BINARY=bin/babis-linux-arm64 \
+		-f images/edge.Dockerfile -t babis-edge:dev-arm64 --load . \
+	|| echo "SKIP: arm64 image build failed (buildx cannot target linux/arm64 here)"
 
 e2e:
-	@echo "not implemented yet (plan step 6)"; exit 1
+	bash test/e2e/run.sh
 
 clean:
 	rm -rf bin/ edge/target/

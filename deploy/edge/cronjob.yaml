@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: babis-checkin
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: babis-checkin
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: checkin
+              image: babis-edge
+              args:
+                - checkin
+                - --hub
+                - $(BABIS_HUB)
+                - --edge-name
+                - $(BABIS_EDGE_NAME)
+              env:
+                - name: BABIS_HUB
+                  valueFrom:
+                    configMapKeyRef:
+                      name: babis-edge
+                      key: hub
+                - name: BABIS_EDGE_NAME
+                  valueFrom:
+                    configMapKeyRef:
+                      name: babis-edge
+                      key: edgeName
+                - name: BABIS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: babis-token
+                      key: token
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  memory: 32Mi
+              securityContext:
+                runAsNonRoot: true
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+                seccompProfile:
+                  type: RuntimeDefault
