@@ -254,6 +254,39 @@ every fix has a before/after number:
 **Proof:** `make load` at 1000 edges: 0 errors, p99 < 1 s; numbers before
 and after recorded in this plan.
 
+#### Load test results
+
+Location drift: the generator lives in `central/cmd/babis-loadgen`, not
+`test/load/`, because it imports `central/internal/wire`. `test/load/run.sh`
+drives it (`make load`). The script builds only the operator and the
+generator (not the edge) and starts a fresh operator per scenario, so
+`VmHWM` and the log count are per scenario.
+
+**Baseline** (before any 6b fix). 2026-10-30, commit `0b011e6`, WSL2 +
+kind (operator on the host, kind API server), 1000 edges, 300 apps each,
+2 rounds, 30 s client timeout. Run time about 10 min (mostly deleting the
+Edges between scenarios).
+
+| Scenario | Round | OK / errors | p50 | p99 | max | Wall | Edges | Operator VmHWM |
+|---|---|---|---|---|---|---|---|---|
+| A burst (spread 0) | 1 | 1000 / 0 | 3279 ms | 8058 ms | 8106 ms | 8.1 s | 1000 | 299 MB |
+| A burst | 2 | 1000 / 0 | 2825 ms | 5422 ms | 5460 ms | 5.4 s | 1000 | 299 MB |
+| B spread 60 s | 1 | 1000 / 0 | 38 ms | 112 ms | 139 ms | 60.0 s | 1000 | 108 MB |
+| B spread 60 s | 2 | 1000 / 0 | 24 ms | 82 ms | 101 ms | 59.9 s | 1000 | 108 MB |
+
+Findings:
+
+- The burst gave no request errors (all 200), but latency is 3-8 s: the
+  client-side limit (20 QPS, burst 30) queues the writes. The 30 s timeout
+  was not reached. Burst p99 is far above the 1 s target; spread p99 is
+  already below it.
+- The operator logged 7 `Reconciler error` lines in A (0 in B): `the object
+  has been modified` conflicts on the Edge status update, and one `context
+  canceled` at shutdown. They are retried and harmless, but show the
+  reconciler and ingest compete for the same status.
+- `VmHWM` of 299 MB in the burst comes from caching 1000 Edges with 300 apps
+  each plus 1000 buffered request bodies. Watch it after SSA (step 2).
+
 ### 7. CI
 
 `.github/workflows/ci.yml` jobs: `central` (Go check + generated-files

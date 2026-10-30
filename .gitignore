@@ -7,3 +7,6 @@ changes/*/bench/fixtures/
 changes/*/bench/fx-*/
 changes/*/bench/launcher
 .claude/worktrees/
+test/load/last-run.json
+test/load/last-operator-*.log
+test/load/kubeconfig

@@ -6,7 +6,7 @@ X86            := x86_64-unknown-linux-musl
 ARM64          := aarch64-unknown-linux-musl
 
 .PHONY: all check central-check edge-check fmt build build-edge-arm64 \
-	generate manifests images images-arm64 e2e contract edge-budget clean
+	generate manifests images images-arm64 e2e load contract edge-budget clean
 
 all: check build
 
@@ -72,6 +72,9 @@ images-arm64: build-edge-arm64
 
 e2e:
 	bash test/e2e/run.sh
+
+load:
+	bash test/load/run.sh
 
 clean:
 	rm -rf bin/ edge/target/
