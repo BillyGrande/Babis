@@ -1,218 +1,266 @@
 # Architecture
 
-How Babis works, why it is shaped this way, and where the
-boundaries are. See [positioning.md](positioning.md) for scope rationale.
+How Babis works, why it is shaped this way, and where the boundaries are.
+This page is a summary. The design is in
+[changes/0002-redesign/spec.md](../changes/0002-redesign/spec.md); read it
+for detail. See [positioning.md](positioning.md) for scope.
 
-Legend: sections marked **[implemented]** exist today; **[planned]** are
-agreed design not yet built.
+Legend: **[implemented]** exists today (phase P1). **[planned]** is agreed
+design that is not built. Phases are in [roadmap.md](roadmap.md).
 
-## Topology
+## Topology [implemented]
 
 ```
- EDGE (each site)                            CENTRAL CLUSTER
-┌───────────────────────────────┐           ┌──────────────────────────────┐
-│  ArgoCD (autonomous)          │           │  babis operator      │
-│   ▲ installs/converges        │           │   ├─ ingest HTTP :8090 ◄─────┼── POST /api/v1alpha1/reports
-│  babis CLI               │  HTTPS,   │   └─ Edge reconciler         │
-│   ├─ bootstrap                │  outbound │        (Reachable condition) │
-│   ├─ apply                    │  only     │                              │
-│   └─ report  ── cron/timer ───┼──────────►│  Edge CRs = fleet inventory  │
-│                               │           │   `kubectl get edges`        │
-│  [air-gap] local OCI registry │           └──────────────────────────────┘
-│  (e.g. Hauler) serving images │
-│  and the ArgoCD chart         │
-└───────────────────────────────┘
+ EDGE (each site)                           CENTRAL CLUSTER
+┌──────────────────────────────┐           ┌───────────────────────────────┐
+│ ArgoCD (autonomous)          │           │ babis-operator                │
+│   ▲ read-only                │           │  ├─ ingest :8090              │
+│   │                          │  HTTP(S), │  │    POST /api/v1alpha1/     │
+│ babis checkin                │  outbound │  │    checkin  (server-side   │
+│  (CronJob, runs, exits)  ────┼──────────►│  │    apply of Edge status)   │
+│                              │  only     │  └─ Edge reconciler           │
+│                              │           │       (conditions)            │
+└──────────────────────────────┘           │ Edge CRs = fleet inventory    │
+                                           │   `kubectl get edges`         │
+                                           └───────────────────────────────┘
 ```
 
 Three invariants define the topology:
 
-1. **Edges only dial out.** The operator never connects to an edge; there
-   is nothing on an edge to connect *to*.
+1. **Edges only dial out.** The operator never connects to an edge. There is
+   nothing on an edge to connect to.
 2. **Each edge is autonomous.** Its own ArgoCD pulls desired state from
-   Git. babis never carries manifests between clusters.
-3. **The edge-side footprint is a one-shot CLI**, not a daemon. Anything
-   long-lived runs centrally.
+   Git. Babis never carries manifests between clusters and never changes
+   ArgoCD objects.
+3. **The edge footprint is a one-shot CLI.** No daemon. Anything long-lived
+   runs centrally.
 
 ## Components
 
-### `babis` CLI (edge side) [implemented]
+### Edge: `babis checkin` [implemented]
 
-A single static Go binary. It shells out to whatever `kubectl` and `helm`
-are on PATH (overridable via `--kubectl`/`--helm`) rather than embedding
-client-go/Helm SDK: small binary, respects the user's kubeconfig, works
-with any Kubernetes distribution. All subcommands support `--dry-run`
-(mutating commands are printed, state inspection still runs).
+A static Rust binary (musl). Source: `edge/`. It runs from the CronJob in
+`deploy/edge/` and exits.
 
-| Command | Role |
-|---|---|
-| `bootstrap` | Install/converge ArgoCD via `helm upgrade --install` (idempotent). Chart source: upstream argo-helm repo, a local `.tgz`, or `oci://` on a local air-gap registry (`--plain-http`). |
-| `apply` | Collect, render, apply manifests. Plain `.yaml` as-is; `.yaml.tmpl` are Go templates rendered with `--values` (strict: `missingkey=error`). Rendered output pipes to `kubectl apply -f -`, never to disk. |
-| `status` | Compact sync/health/revision of local ArgoCD Applications; `--json` for machines. |
-| `report` | One-shot heartbeat to the operator. Designed for cron/systemd timers. |
-
-### Central operator [implemented]
-
-A controller-runtime manager with two members:
-
-- **Ingest server** (`internal/operator/ingest`): `POST
-  /api/v1alpha1/reports`, bearer-token auth, 1 MiB body cap. First report
-  from an unknown edge **auto-registers** it (creates the Edge object);
-  every report rewrites the Edge's status subresource. No manual fleet
-  enrollment step.
-- **Edge reconciler** (`internal/operator/controller`): owns exactly one
-  property — the `Reachable` condition. The decision core
-  (`Reachability(lastReport, timeout, now)`) is a pure function; the
-  reconciler requeues itself precisely at the moment the answer could
-  change (the heartbeat deadline). A fresh report triggers reconcile
-  through the normal watch, flipping the edge back to reachable with no
-  polling.
-
-Reachability is **inferred, never probed**: silence past the timeout
-(default 15 m, per-edge override `spec.heartbeatTimeout`) means
-unreachable. This is the only definition compatible with outbound-only.
-
-### Edge CRD (`fleet.babis.dev/v1alpha1`) [implemented]
-
-- `spec` — operator-side intent: `displayName`, `heartbeatTimeout`,
-  `expectedStoreVersion`.
-- `status` — edge-reported observation: `lastReportTime`, `labels`,
-  per-app `apps[]` plus `appsTotal/appsSynced/appsHealthy` roll-ups,
-  `storeVersion`, `registryHealthy`, and `conditions` (reconciler-owned).
-
-The split matters: ingest writes status only, humans/automation write spec
-only, and drift questions ("is the edge on the expected store version?")
-are a comparison between the two. CRDs — not a database — are the state
-store: they get RBAC, watch semantics, `kubectl` UX, and GitOps-ability
-for free. Historical/analytical storage is an optional *additive* consumer
-(see Roadmap), never a replacement.
-
-### Wire contract (`internal/wire`) [implemented]
-
-The report JSON is the compatibility boundary between fleets of old CLIs
-and a new operator. Rules: additive changes only after v0.1; edges never
-import k8s API machinery (the `wire.App` ↔ `v1alpha1.AppSummary`
-duplication is deliberate); the edge name must be a DNS-1123 subdomain
-because it becomes an object name.
-
-## Day-0 flows
-
-### Online edge
-
-```bash
-babis bootstrap --chart-version <v> -f values.yaml
-babis apply ./bootstrap-apps --values edge-values.yaml
-# + cron: babis report --hub https://fleet.example.com ...
+```
+babis checkin --hub URL --edge-name NAME [--namespace argocd]
+              [--hub-ca FILE] [--page-size 100] [--jitter 0s]
+babis --version
 ```
 
-### Air-gapped edge [partially planned]
+The token is in the environment variable `BABIS_TOKEN`. Exit codes: `0`
+sent, `1` Kubernetes or hub error, `2` usage error.
 
-Today: bring your own local registry (e.g. a Hauler store serving on
-`localhost:5000`), then
+- **No Kubernetes client library.** The binary calls the API server with
+  `ureq` and `serde`, decodes JSON as a stream, and lists with
+  `limit`/`continue` pagination. Result: a small binary and low memory
+  (budget: 3 MB binary, 5 MB peak RSS at 300 Applications; `make
+  edge-budget`).
+- **In-cluster credentials only** in P1 (service-account token and CA).
+  Kubeconfig support is planned for P2.
+- **Read-only.** The Role in `deploy/edge/rbac.yaml` has `get,list` on
+  `applications`, `deployments`, `statefulsets` in the ArgoCD namespace and
+  `get` on the secret `in-cluster` only. The e2e test checks that no write
+  verb is allowed.
+- **Observed per check-in** (a full snapshot): ArgoCD version (image tag of
+  `argocd-application-controller`, else `argocd-server`), components
+  (Deployments and StatefulSets with `app.kubernetes.io/part-of=argocd`:
+  ready and desired replicas), Applications (name, sync, health,
+  revision), and labels from the cluster secret `in-cluster` without
+  reserved prefixes.
+- **`--jitter`** waits a random time in `[0, DURATION)` before the
+  check-in, so many CronJobs do not call the hub together. The CronJob uses
+  `60s`.
+- It shells out to nothing. (`helm` is for P2.)
 
-```bash
-babis bootstrap --chart oci://localhost:5000/charts/argo-cd --plain-http
-babis apply ./bootstrap-apps --values edge-values.yaml
-babis report ... --registry-url http://localhost:5000 --store-version <v>
-```
+### Central: operator [implemented]
 
-Planned: `babis airgap` subcommands wrapping store load / registry
-serve / health, and automatic store-version detection so the report flags
-disappear.
+A Go controller-runtime manager. Source: `central/`, entry
+`central/cmd/babis-operator`. It has two members.
 
-## Edge identity and the in-cluster secret [planned]
+- **Ingest** (`central/internal/ingest`): `POST /api/v1alpha1/checkin` and
+  `GET /healthz` on `--ingest-addr` (default `:8090`). Bearer-token auth,
+  1 MiB body cap, strict validation. A check-in from an unknown edge
+  **auto-registers** it (creates the Edge). Ingest writes status with
+  **server-side apply** (field manager `babis-ingest`). It owns every
+  status field except `conditions`, and never touches `spec` or
+  `metadata.labels`.
+- **Edge reconciler** (`central/internal/controller`): owns only the
+  `conditions`, also with server-side apply (field manager
+  `babis-reconciler`). It requeues at the moment the heartbeat could expire.
 
-The unifying idea: **an edge's identity is a set of labels, declared once,
-consumed twice.**
+Flags that matter (see `central/cmd/babis-operator/main.go`):
 
-ArgoCD ApplicationSets running *on the edge* can select work using the
-cluster generator, which matches labels on cluster secrets. For an
-autonomous install that means a declarative secret for the local cluster:
+| Flag | Default | Meaning |
+|---|---|---|
+| `--fleet-namespace` | `babis-fleet` | namespace of the Edge objects |
+| `--ingest-addr` | `:8090` | check-in API address |
+| `--heartbeat-timeout` | `15m` | default time without check-in before `Reachable=False` |
+| `--max-edges` | `2000` | a new edge beyond this gets `429`; known edges keep working |
+| `--max-inflight` | `64` | check-ins handled at once; others wait up to 20 s, then get `503` |
+| `--leader-elect` | `true` | only the leader reconciles; every replica serves ingest |
+| `--insecure-no-auth` | `false` | development only; without it an empty `BABIS_INGEST_TOKEN` stops the start |
+| `--kube-api-qps`, `--kube-api-burst` | `-1`, `0` | client-side rate limit (off by default) |
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: in-cluster
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: cluster
-    region: gr-north          # user-defined identity labels
-    tier: retail
-stringData:
-  name: in-cluster
-  server: https://kubernetes.default.svc
-```
+`deploy/central` runs `replicas: 2` behind one Service. Ingest needs no
+leader election, and server-side apply is safe with several writers.
 
-Design decision: the tool manages this object **structurally, not via
-templating**. The secret has a tiny, fixed schema; only the labels vary.
-Making every user maintain a `.yaml.tmpl` of it would be boilerplate with
-sharp edges (typos in `secret-type`, wrong server URL, lost labels on
-re-render). Instead:
+### Edge CRD: `fleet.babis.dev/v1alpha1` [implemented]
 
-```bash
-babis bootstrap --cluster-label region=gr-north --cluster-label tier=retail
-# and for day-2 identity changes without a redeploy:
-babis cluster-labels set key=value [...]
-```
+Short name `edge`. Printer columns: `ARGOCD`, `READY`, `APPS`, `SYNCED`,
+`HEALTHY`, `REACHABLE`, `LAST CHECKIN`.
 
-Semantics: create the secret if absent; otherwise **merge** the given
-labels, preserving unknown ones (so different actors can own different
-labels). The same labels flow into `report` automatically, so local
-ApplicationSet selection and the central fleet inventory index on one
-identity source.
+- `spec` (written by humans): `displayName`, `heartbeatTimeout`.
+- `status` (written from check-ins): `lastCheckinTime`, `labels`,
+  `argocd{version, components[]}`, `apps[]`, `appsTotal`, `appsSynced`,
+  `appsHealthy`, and `conditions`.
+- `metadata.labels` are for admins (`kubectl label`). Ingest never changes
+  them. `status.labels` is what the edge says about itself.
 
-Templating (`apply --values`) remains the mechanism for what is genuinely
-user-shaped: the bootstrap Applications themselves — repo URLs, path
-segments per environment, target revisions. The rule of thumb:
-**known-schema objects get structured commands; user-shaped manifests get
-templates.** Organization-specific parameters must arrive as labels or
-template values, never as named CLI flags.
+Conditions (pure functions in `central/internal/controller`, table-tested):
 
-The structured path is a convenience default, not a restriction: users who
-need extra fields on the cluster secret (annotations, additional data keys)
-can always template the whole secret themselves and `apply` it — the
-`--cluster-label` merge semantics must tolerate a secret it didn't create.
+- **`Reachable`**: `True` when the last check-in is newer than the
+  heartbeat timeout. `Unknown` before the first check-in. Reachability is
+  inferred, never probed. Silence is the only signal that works with
+  outbound-only edges.
+- **`ArgoCDReady`**: `Unknown` while the edge is not `Reachable` (the last
+  reported state may be stale). Otherwise `True` when every component has
+  `ready == desired` and `desired > 0`; `False` with the names of the
+  components that are not ready.
+
+CRDs, not a database, are the state store. History would be a separate,
+additive consumer.
+
+### Wire contract [implemented]
+
+`wire/` holds the JSON Schemas (`checkin.request.schema.json`,
+`checkin.response.schema.json`) and golden fixtures in `wire/testdata/`.
+The Go tests (`central/internal/wire`) and the Rust tests
+(`edge/tests/contract.rs`) run the same fixtures. CI fails on drift. See
+[wire/README.md](../wire/README.md).
+
+Rules:
+
+- Additive changes only after the first release. Old edges must keep
+  working with new operators.
+- Unknown fields are ignored on both sides.
+- The response has the reserved fields `generation`, `desired`,
+  `extensions` (empty in P1), so P3 and P4 are not breaking changes.
+- The edge name must be a DNS-1123 subdomain, because it becomes the
+  object name.
+- Errors: `401` bad token, `400` invalid payload, `413` body over 1 MiB,
+  `429` fleet full (`--max-edges`), `503` busy (`--max-inflight`).
+
+## ArgoCD coupling [implemented]
+
+Babis is an ArgoCD tool by design (spec § ArgoCD coupling).
+
+- ArgoCD only. No Flux, no generic GitOps layer.
+- ArgoCD's own integration points first: Application status, the cluster
+  secret, notifications, upstream manifests and chart.
+- ArgoCD's vocabulary: `sync`, `health`, `revision` are sent untranslated.
+- Babis supports the ArgoCD minor versions that upstream supports. e2e
+  runs on the oldest and the newest (now v3.3.18 and v3.5.6).
+- Babis never edits Applications, AppProjects, `argocd-cm` or
+  `argocd-rbac-cm`.
+
+## Scale [implemented]
+
+The P1 baseline is 500 edges at the 5-minute interval. Nothing may block
+5000. The risks are bursts and the write path, not volume. Measures:
+
+- Edge `--jitter` spreads the calls.
+- Ingest and reconciler write with server-side apply (one API call, no
+  conflicts between the two writers).
+- `--max-inflight` bounds the request bodies in memory. `--max-edges` caps
+  what one leaked shared token can register. The count comes from the
+  informer cache, so a burst of new edges can pass the cap by the few
+  creates the cache has not seen yet. It is a guard, not an exact quota.
+- `replicas: 2` for the operator.
+
+Load test (`make load`, 1000 simulated edges, 300 apps each): with the
+60-second spread the CronJob uses, 0 errors and p99 about 120 ms. In the
+worst case (all edges at the same second) 0 errors, p99 about 5 s
+(queueing on the API server) and operator peak RSS 117 MiB against a 192 Mi
+limit. Details and the baseline are in
+[plan.md § 6b](../changes/0002-redesign/plan.md).
+
+[planned] For fleets far above 5000, the spec describes a heartbeat/status
+split: write `Edge.status` only when it changed and keep the heartbeat in a
+small `Lease`. It waits for a load run that shows the need.
 
 ## Security model
 
-- Ingest auth is a single shared bearer token
-  (`BABIS_INGEST_TOKEN` / `BABIS_TOKEN`), constant-time compared.
-  Acknowledged v1 limitation; per-edge tokens or mTLS are on the roadmap.
-  TLS termination is deferred to the user's ingress in front of :8090.
-- Reports are treated as untrusted input: size-capped, JSON-decoded,
-  validated (DNS-1123 edge name) before any API call.
-- A report can only influence the Edge object bearing its name; spec is
-  never writable through ingest.
-- The operator's RBAC (generated, `config/rbac/`) is scoped to `edges` and
-  `edges/status`.
+- P1 ingest auth is **one shared bearer token** (`BABIS_INGEST_TOKEN` on
+  the operator, `BABIS_TOKEN` on edges), compared in constant time. This is
+  accepted in P1 because central can change nothing on an edge. Per-edge
+  tokens are the gate before P3 [planned].
+- Babis does not terminate TLS. Put your ingress in front of `:8090`. The
+  edge uses rustls with compiled-in web roots and `--hub-ca` for a private
+  CA; `http://` works for an in-cluster hub. HTTPS against a real hub is
+  not yet tested end to end.
+- Check-ins are untrusted input: size-capped, decoded, and validated
+  before any API call.
+- A check-in can only influence the Edge object with its name. `spec` is
+  not writable through ingest.
+- The operator RBAC is generated (`central/config/rbac/`). The edge RBAC
+  is read-only (see above).
+- A leaked shared token lets an attacker register junk Edges up to
+  `--max-edges` and fake state for known names. This is why per-edge tokens
+  come before any feature that lets central change an edge.
 
-## Failure modes and behavior
+## Failure modes
 
 | Failure | Behavior |
 |---|---|
-| WAN down at report time | The one-shot fails; cron retries on the next tick. Missed heartbeats ≤ timeout are invisible; longer flips Reachable=False, which self-heals on the next delivered report. |
-| Operator down | Edges keep reconciling their own workloads (autonomy invariant). Reports fail until it returns; no edge-side queueing in v1. |
-| Duplicate edge names | Two edges write one Edge object — last writer wins per field. Prevented operationally (names from serial numbers/hostnames); per-edge auth will make it enforceable. |
-| Clock skew on an edge | Harmless: `lastReportTime` is stamped by the operator at receipt, not taken from the report. |
+| WAN down at check-in time | The one-shot fails (exit `1`) and the CronJob tries again at the next tick. A gap shorter than the timeout is invisible. A longer gap sets `Reachable=False` (and `ArgoCDReady=Unknown`). It heals at the next delivered check-in. |
+| Operator down | Edges keep working on their own (autonomy). Check-ins fail until the operator returns. There is no edge-side queue. |
+| ArgoCD component down on the edge | The next check-in shows it. `ArgoCDReady=False` names the components. |
+| CronJob suspended or deleted | `Reachable=False` after the heartbeat timeout. |
+| Duplicate edge names | Two edges write one Edge object. Prevented by naming practice now. Per-edge tokens will enforce it [planned]. |
+| Clock skew on an edge | Harmless: `lastCheckinTime` is stamped by the operator when it receives the check-in. |
+| Fleet full (`--max-edges`) | New edges get `429`. Known edges keep working. |
+| Burst over `--max-inflight` | Requests wait up to 20 s, then get `503` with `Retry-After`. The edge fails and retries at the next tick. |
 
 ## Repository layout
 
 ```
-cmd/babis/        CLI entry (signal-aware context)
-cmd/operator/          manager wiring: reconciler + ingest runnable
-api/v1alpha1/          Edge types; deepcopy + CRDs generated (make generate manifests)
-internal/cli/          cobra constructors only — no business logic, no globals
-internal/argocd/       helm install + Application state via kubectl
-internal/manifests/    collect / render / apply
-internal/execx/        exec wrapper (--dry-run / --verbose)
-internal/wire/         report contract (shared, k8s-free)
-internal/operator/     controller/ (reconciler), ingest/ (HTTP → Edge status)
-config/crd|rbac/       generated — never hand-edit
+edge/                  Rust crate, binary `babis` (toolchain: rust-toolchain.toml)
+central/               Go module github.com/BillyGrande/babis/central
+  api/v1alpha1/        Edge types (kubebuilder markers)
+  cmd/babis-operator/  operator entry
+  cmd/babis-loadgen/   load generator for `make load`
+  internal/wire/       request/response types and Validate()
+  internal/ingest/     POST /api/v1alpha1/checkin
+  internal/controller/ Reachability(), ArgoCDReadiness(), reconciler
+  config/crd, rbac/    generated: never hand-edit
+wire/                  JSON Schemas and golden fixtures (testdata/)
+deploy/edge/           kustomize: CronJob, ConfigMap, Role (install in the ArgoCD namespace)
+deploy/central/        kustomize: namespaces, CRD, RBAC, Deployment, Service
+images/                Dockerfiles (prebuilt static binaries are copied in)
+test/e2e/              kind end-to-end, oldest and newest ArgoCD
+test/load/             load test driver (make load)
+test/budget/           edge size and peak-RSS budget
 docs/                  this file, positioning.md, roadmap.md
+changes/               intent, spec, plan per change
 ```
 
-## Roadmap
+## Planned phases
 
-See [roadmap.md](roadmap.md) — the single source of truth for milestones.
-Planned items referenced in this document ([planned] markers) are specified
-there.
+Short form. The details are in the spec and in [roadmap.md](roadmap.md).
+
+- **P1b, agentless telemetry [planned].** ArgoCD's own notifications
+  controller posts Application events to `POST /api/v1alpha1/app-events`.
+  Nothing from Babis runs on the edge. Fallback for edges that cannot
+  install a CronJob.
+- **P2, bootstrap [planned].** `babis bootstrap` installs ArgoCD with Helm
+  (shell-out to `helm`), writes identity labels on the cluster secret
+  `in-cluster`, and reads edge config from the ConfigMap `babis-edge`.
+  Works air-gapped from a local OCI registry.
+- **P3, desired state [planned].** Per-edge tokens first. Then
+  `spec.argocd.chartVersion` and `spec.labels` travel in the check-in
+  response; the edge applies only fields in its accept list (default:
+  none). New condition `Converged`. This extends the scope to the lifecycle
+  of the edge's ArgoCD installation, so `positioning.md` changes then.
+- **P4, extensions [planned].** `extensions` in the wire format, edge
+  plugins `babis-<name>`, one CRD per extension centrally. First: Hauler.

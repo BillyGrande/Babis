@@ -1,6 +1,6 @@
 # Plan: P1 — Telemetry
 
-- **Status:** Accepted 2026-10-30 — in progress (steps 1–6 done)
+- **Status:** Accepted 2026-10-30 — P1 done (steps 1–8); release automation open
 - **Date:** 2026-10-30
 - **Spec:** [spec.md § P1](spec.md#p1--telemetry), [§ Scale](spec.md#scale), [§ Language decision](spec.md#language-decision)
 
@@ -16,7 +16,7 @@
 | 6. End-to-end on kind | done | `84ef30f` + fixes |
 | 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
 | 7. CI | done | `c850f93` (PR #1) |
-| 8. Docs | todo | — |
+| 8. Docs | done | branch `p1-docs` |
 
 Drift from the original plan, recorded here as CLAUDE.md requires:
 
