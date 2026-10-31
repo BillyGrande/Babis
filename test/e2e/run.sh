@@ -16,8 +16,10 @@ EDGE=e2e-edge
 HUB=http://babis-operator.babis-system.svc:8090
 
 CLUSTER=""
+TMP="$(mktemp -d)"
 cleanup() {
   local rc=$?
+  rm -rf "$TMP"
   if [ -n "$CLUSTER" ] && [ "$KEEP" != "1" ]; then
     kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
   elif [ -n "$CLUSTER" ]; then
@@ -66,6 +68,26 @@ first_ok() {
     [ "$(edge_jp '{.status.appsTotal}')" = "3" ] && ready_state
 }
 
+# ArgoCD pulls redis from public.ecr.aws with imagePullPolicy Always. Anonymous
+# pulls from shared CI runner IPs get "429 Too Many Requests" there. So pull it
+# into the kind node with retries (then the same image from Docker Hub, tagged
+# with the original name) and set the pull policy to IfNotPresent in the test
+# cluster only.
+preload_image() {
+  local image=$1 node="$CLUSTER-control-plane" i
+  for i in 1 2 3 4 5; do
+    docker exec "$node" crictl pull "$image" >/dev/null && return 0
+    log "pull $image failed (try $i), retry in $((i * 10))s"
+    sleep $((i * 10))
+  done
+  local mirror="docker.io/library/${image##*/docker/library/}"
+  [ "$mirror" != "docker.io/library/$image" ] || fail "cannot pull $image"
+  log "pull $mirror instead"
+  docker exec "$node" ctr -n k8s.io images pull "$mirror" >/dev/null &&
+    docker exec "$node" ctr -n k8s.io images tag "$mirror" "$image" >/dev/null ||
+    fail "cannot pull $image or $mirror"
+}
+
 run_version() {
   VERSION=$1
   CLUSTER="babis-e2e-${VERSION#v}"
@@ -75,9 +97,18 @@ run_version() {
   kind create cluster --name "$CLUSTER" --wait 120s
   kind load docker-image babis-edge:dev babis-operator:dev --name "$CLUSTER"
 
+  local manifest="$TMP/install-$VERSION.yaml" redis
+  curl -fsSL --retry 3 -o "$manifest" \
+    "https://raw.githubusercontent.com/argoproj/argo-cd/${VERSION}/manifests/install.yaml"
+  redis="$(grep -oE 'image: [^ ]*/redis:[^ ]*' "$manifest" | head -1 | cut -d' ' -f2)"
+  [ -n "$redis" ] || fail "no redis image in ArgoCD $VERSION install.yaml"
+  preload_image "$redis"
+
   kubectl create namespace argocd
-  kubectl apply -n argocd --server-side --force-conflicts \
-    -f "https://raw.githubusercontent.com/argoproj/argo-cd/${VERSION}/manifests/install.yaml" >/dev/null
+  kubectl apply -n argocd --server-side --force-conflicts -f "$manifest" >/dev/null
+  kubectl -n argocd patch deploy argocd-redis --type=json -p '[
+    {"op":"test","path":"/spec/template/spec/containers/0/name","value":"redis"},
+    {"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
   # Image pulls on shared CI runners are sometimes slow; on timeout, show why.
   if ! kubectl -n argocd rollout status deploy --timeout=600s ||
     ! kubectl -n argocd rollout status statefulset --timeout=600s; then
