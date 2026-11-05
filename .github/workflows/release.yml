@@ -1,0 +1,150 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - images/**
+      - Makefile
+      - deploy/**
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Tool pins match ci.yml and the local toolchain (CLAUDE.md, Dev Workflow).
+env:
+  ZIG_VERSION: 0.17.0
+  CARGO_ZIGBUILD_VERSION: 0.24.0
+
+jobs:
+  # Builds and checks everything. On a PR this is a dry run.
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: central/go.mod
+      - name: install toolchain from edge/rust-toolchain.toml
+        working-directory: edge
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild@${{ env.CARGO_ZIGBUILD_VERSION }}
+      - name: version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' edge/Cargo.toml | head -n1)"
+          if [ -z "$cargo_version" ]; then
+            echo "Cannot read the version from edge/Cargo.toml"
+            exit 1
+          fi
+          prerelease=false
+          if [ "$REF_TYPE" = "tag" ]; then
+            version="$REF_NAME"
+            if [ "$version" = "v${cargo_version}" ]; then
+              :
+            elif [[ "$version" =~ ^v${cargo_version//./\\.}-rc\.[0-9]+$ ]]; then
+              prerelease=true
+              sed -i "0,/^version = .*/s//version = \"${version#v}\"/" edge/Cargo.toml
+            else
+              echo "Tag $version must be v${cargo_version} or v${cargo_version}-rc.N"
+              exit 1
+            fi
+          else
+            version="v${cargo_version}-dryrun"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Release version: $version"
+      - run: make check contract
+      - run: make release-binaries release-manifests VERSION=${{ steps.version.outputs.version }}
+      - run: make edge-budget
+      - uses: docker/setup-buildx-action@v3
+      - name: images (dry run, no push)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for img in edge:babis-edge central:babis-operator; do
+            docker buildx build --platform linux/amd64,linux/arm64 \
+              --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" \
+              -f "images/${img%%:*}.Dockerfile" -t "ghcr.io/billygrande/${img##*:}:$VERSION" .
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          if-no-files-found: error
+          path: |
+            bin/babis-linux-amd64
+            bin/babis-linux-arm64
+            bin/babis-operator-linux-amd64
+            bin/babis-operator-linux-arm64
+            bin/SHA256SUMS
+            bin/babis-central.yaml
+            bin/babis-edge.yaml
+
+  # Pushes images and creates the GitHub release. Tags only.
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: bin
+      - name: restore file modes
+        run: chmod +x bin/babis-linux-* bin/babis-operator-linux-*
+      - name: checksums
+        run: cd bin && sha256sum -c SHA256SUMS
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push images
+        run: |
+          for img in edge:babis-edge central:babis-operator; do
+            name="ghcr.io/billygrande/${img##*:}"
+            tags=(-t "$name:$VERSION")
+            if [ "$PRERELEASE" != "true" ]; then
+              tags+=(-t "$name:latest")
+            fi
+            docker buildx build --platform linux/amd64,linux/arm64 --push \
+              --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" \
+              -f "images/${img%%:*}.Dockerfile" "${tags[@]}" .
+          done
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=(--generate-notes)
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$VERSION" "${flags[@]}" \
+            bin/babis-linux-amd64 bin/babis-linux-arm64 \
+            bin/babis-operator-linux-amd64 bin/babis-operator-linux-arm64 \
+            bin/SHA256SUMS bin/babis-central.yaml bin/babis-edge.yaml
