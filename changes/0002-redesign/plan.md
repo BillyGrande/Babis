@@ -1,6 +1,6 @@
 # Plan: P1 — Telemetry
 
-- **Status:** Accepted 2026-10-30 — P1 done (steps 1–8); release automation open
+- **Status:** Accepted 2026-10-30 — steps 1–8 done; steps 9–10 (release, HTTPS) added and accepted 2026-11-05
 - **Date:** 2026-10-30
 - **Spec:** [spec.md § P1](spec.md#p1--telemetry), [§ Scale](spec.md#scale), [§ Language decision](spec.md#language-decision)
 
@@ -17,6 +17,8 @@
 | 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
 | 7. CI | done | `c850f93` (PR #1) |
 | 8. Docs | done | branch `p1-docs` |
+| 9. Release automation (added) | in progress | branch `p1-release` |
+| 10. HTTPS hub (added) | in progress | branch `p1-release` |
 
 Drift from the original plan, recorded here as CLAUDE.md requires:
 
@@ -32,6 +34,9 @@ Drift from the original plan, recorded here as CLAUDE.md requires:
   supported), checked 2026-10-30.
 - **Scale hardening (step 6b)** added after the 500+ edges review; see
   [spec § Scale](spec.md#scale).
+- **Release and HTTPS (steps 9, 10)** added 2026-11-05: the roadmap had
+  them in P1, this plan had release automation out of scope. Found when a
+  real (mixed amd64/arm64) cluster could not pull the `:dev` images.
 
 Goal: a central hub that monitors existing ArgoCD installations. Edges run
 a read-only Rust `babis checkin` from a CronJob; a Go operator turns
@@ -366,6 +371,50 @@ drift), `edge` (fmt, clippy, test, musl build, size budget), `contract`
 
 **Proof:** every command in README quickstart runs as written on kind.
 
+### 9. Release automation (added 2026-11-05)
+
+- **Versioning:** `edge/Cargo.toml` is `0.1.0`. Tags are `v0.1.0-rc.N` or
+  `v0.1.0`. The release job fails unless the tag is `v<cargo version>` or
+  `v<cargo version>-rc.N`. For an rc tag it writes the rc version into
+  `Cargo.toml` before the build (CI only), so rc and final come from the
+  same commit. Operator version from `make ... VERSION=<tag>`.
+- **Makefile:** `release-binaries` builds `bin/babis-linux-{amd64,arm64}`
+  and `bin/babis-operator-linux-{amd64,arm64}` (static) and
+  `bin/SHA256SUMS`. `release-manifests VERSION=` renders `deploy/central` and
+  `deploy/edge` with `ghcr.io/billygrande/babis-{operator,edge}:<VERSION>`
+  into `bin/babis-central.yaml` and `bin/babis-edge.yaml` (the `deploy/`
+  sources keep `:dev`). `make build` also writes the `-linux-amd64` names.
+- **Images:** both Dockerfiles copy `bin/<name>-linux-${TARGETARCH}` (no
+  `RUN`, so buildx multi-arch needs no QEMU) and set OCI labels `source`,
+  `version`, `revision`.
+- **Workflow** `.github/workflows/release.yml`: on tag `v*` publish; on PRs
+  that touch the release files, a dry run without push. Version check →
+  `make check contract` → binaries → manifests → `make edge-budget` → buildx
+  amd64+arm64 images to ghcr (`latest` only for non-rc) → `gh release
+  create` (prerelease for rc) with binaries, `SHA256SUMS`, manifests.
+
+**Proof:** `make release-binaries release-manifests` locally (arch, static,
+checksums, `kubectl apply --dry-run=client`); local buildx multi-arch build;
+the dry-run job green on the PR; after `v0.1.0-rc.1`: the image index lists
+amd64 and arm64, and a smoke install on a real mixed-arch vcluster gives
+`Reachable=True` and `ArgoCDReady=True`.
+
+### 10. HTTPS hub (added 2026-11-05)
+
+- **Edge test:** TLS fake hub (std `TcpListener` + `rustls`, already in the
+  lock file through ureq; dev-dependency only) with a committed test CA and
+  server cert. Cases: right CA → exit 0; no `--hub-ca` → exit 1; wrong CA →
+  exit 1.
+- **Deploy:** kustomize Component `deploy/edge/hub-ca/` mounts ConfigMap
+  `babis-hub-ca` and adds `--hub-ca`. TLS section in `deploy/README.md`.
+- **e2e scenario 6:** Traefik (pinned Helm chart; ingress-nginx is retired)
+  terminates TLS for `babis.e2e.test` with a cert from a test CA; CoreDNS
+  rewrites the name to Traefik; the edge switches to
+  `https://babis.e2e.test` with the `hub-ca` component.
+
+**Proof:** `make edge-check`; `make e2e` green on both ArgoCD versions with
+`lastCheckinTime` advancing over https.
+
 ## Next: P1b (after P1 ships)
 
 Not part of this plan's done criteria; listed so P1 does not block it.
@@ -399,7 +448,7 @@ Not part of this plan's done criteria; listed so P1 does not block it.
 ## Out of scope for P1
 
 Host cron / kubeconfig mode, `bootstrap`, `apply`, desired state, per-edge
-auth, extensions, metrics, release automation and signing.
+auth, extensions, metrics, release signing.
 
 ## Delegation
 
@@ -411,4 +460,5 @@ auth, extensions, metrics, release automation and signing.
 | 5, 6 | Sonnet subagent |
 | 6b | Sonnet subagent(s): load test first, then central and edge in parallel |
 | 8 | Sonnet subagent |
+| 9, 10 | two Sonnet subagents in parallel worktrees |
 | Review, budgets, e2e verification, integration | main session (Opus) |
