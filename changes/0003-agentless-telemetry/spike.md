@@ -185,6 +185,8 @@ Size: guestbook-1 had 14 keys, 1259 bytes after about 1 h. late-app had 19 keys,
 
 **Impact:** open: I saw no pruning of old keys in 1 h. If the keys are never pruned, then at about 90 bytes per key and 6 keys per hour (`[0:15]`) the annotation reaches the 256 KiB limit for all annotations of one object in about 19 days. At `[0:16]` it takes much less. I did not run longer. Test this before the spec depends on `oncePer` for a long time.
 
+**Closed after the spike (source read, not a run):** the notifications engine keeps the newest 100 keys (`notifiedHistoryMaxSize = 100` and `truncate()` in `pkg/controller/state.go`). The engine versions that ArgoCD v3.3.18 (`d27ba0152c1c`) and v3.5.6 (`0cff13b8a717`) use have it. So the annotation stays below about 10 KB.
+
 ## Item 7. Hub down
 
 **Result:** 2 min outage with a slow failure (Service with no endpoints): the event arrives late. A fast failure (DNS): the controller gives up after 4 attempts and the change event is lost. The heartbeat repairs the state later.

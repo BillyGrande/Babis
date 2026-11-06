@@ -1,11 +1,12 @@
 # Intent: agentless telemetry from ArgoCD notifications
 
 - **Author:** BillyGrande (draft by Claude)
-- **Status:** Draft 2026-11-06 — spike in progress
+- **Status:** Done 2026-11-06 — answered in the spike and the spec
 - **Date:** 2026-11-06
 - **Roadmap:** [P1b - Agentless telemetry](../../docs/roadmap.md#p1b---agentless-telemetry)
 - **Draft design:** [0002 spec § P1b](../0002-redesign/spec.md#p1b--agentless-telemetry-argocd-notifications)
-- **Spec:** [spec.md](spec.md) (after the spike)
+- **Spike:** [spike.md](spike.md)
+- **Spec:** [spec.md](spec.md)
 
 ## Problem
 

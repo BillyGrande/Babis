@@ -176,89 +176,9 @@ Acceptable because central can change nothing in P1.
 
 ## P1b — Agentless telemetry (ArgoCD notifications)
 
-For edges where nothing new can be installed — no CronJob, no RBAC, no
-image pull — but the ArgoCD notification config can be edited. ArgoCD's own
-`argocd-notifications-controller` posts per-Application events to central.
-Babis runs nothing on the edge, so it adds **zero RAM** there. The check-in
-API stays the full-featured path; this is the fallback.
-
-Needs on the edge:
-
-- `argocd-notifications-controller` running (part of the standard install;
-  check minimal/core installs).
-- Edit rights on `argocd-notifications-cm` and `argocd-notifications-secret`.
-
-Babis ships `deploy/edge-notifications/`: a kustomize patch for those two
-objects (edge name and hub URL as vars).
-
-```yaml
-# merged into argocd-notifications-cm
-service.webhook.babis: |
-  url: https://fleet.example.com
-  headers:
-  - name: Authorization
-    value: Bearer $babis-token        # key in argocd-notifications-secret
-  - name: Content-Type
-    value: application/json
-template.babis-app: |
-  webhook:
-    babis:
-      method: POST
-      path: /api/v1alpha1/app-events
-      body: |
-        {"edge": "shop-athens-042",
-         "event": "{{if .app.metadata.deletionTimestamp}}deleted{{else}}state{{end}}",
-         "app": {"name": {{toJson .app.metadata.name}},
-                 "sync": {{toJson .app.status.sync.status}},
-                 "health": {{toJson .app.status.health.status}},
-                 "revision": {{toJson .app.status.sync.revision}}}}
-trigger.babis-change: |
-  - when: "true"
-    oncePer: app.status.sync.status + app.status.health.status + app.status.sync.revision
-    send: [babis-app]
-trigger.babis-heartbeat: |
-  - when: "true"
-    oncePer: app.status.reconciledAt[0:15]    # ~1 event per app per 10 min
-    send: [babis-app]
-trigger.babis-deleted: |
-  - when: app.metadata.deletionTimestamp != nil
-    oncePer: app.metadata.deletionTimestamp
-    send: [babis-app]
-subscriptions: |
-  - recipients: [babis]
-    triggers: [babis-change, babis-heartbeat, babis-deleted]
-```
-
-**To verify on a real ArgoCD before this is final** (P1b e2e): the
-`$babis-token` secret reference inside a header value, string slicing in
-`oncePer`, `subscriptions` as a global (annotation-free) subscription, and
-`toJson` on missing status fields.
-
-Central:
-
-- `POST /api/v1alpha1/app-events`, same bearer auth, body ≤ 64 KiB, one
-  Application per event. Validation as the check-in (edge name, app name).
-- **Coalescing.** Events go into a per-edge in-memory buffer; status is
-  flushed at most every 30 s per edge (`--event-flush-interval`). Without
-  this, 1000 edges × 300 apps would mean hundreds of API-server writes per
-  second. A restart loses ≤ 30 s of events; the next heartbeat repairs it.
-- Flush: upsert apps by name, set `apps[].lastSeen`, drop `deleted` apps
-  and apps not seen for 3 heartbeat periods, recompute counts, set
-  `lastCheckinTime` to the last receipt, set `status.telemetry.source:
-  argocd-notifications`.
-- If an edge also checks in, the check-in snapshot wins while it is fresh;
-  events for that edge are ignored.
-
-Compared with the check-in:
-
-| | P1 check-in | P1b notifications |
-|---|---|---|
-| Install on the edge | CronJob + Role + image | edit 2 ArgoCD objects |
-| Extra RAM on the edge | ~2 MB for < 1 s per run | 0 |
-| ArgoCD version, component readiness | yes | no → `ArgoCDReady=Unknown` |
-| Identity labels | cluster secret | optional static labels in the template; or admin `metadata.labels` |
-| `Reachable` | check-in age | event age; needs ≥ 1 Application on the edge |
-| Deleted apps | absent from the next snapshot | `deleted` event; stale-prune fallback |
+Moved to [changes/0003-agentless-telemetry/spec.md](../0003-agentless-telemetry/spec.md).
+The draft that was here was checked by a spike on ArgoCD v3.5.6 and v3.3.18
+([spike.md](../0003-agentless-telemetry/spike.md)) and changed.
 
 ## P2 — Bootstrap
 
