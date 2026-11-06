@@ -1,0 +1,7 @@
+# Test overlay for e2e scenario 6: the edge trusts the test CA.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../deploy/edge
+components:
+  - ../../../deploy/edge/hub-ca

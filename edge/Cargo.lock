@@ -13,6 +13,7 @@ name = "babis"
 version = "0.1.0"
 dependencies = [
  "lexopt",
+ "rustls",
  "serde",
  "serde_json",
  "tiny_http",
