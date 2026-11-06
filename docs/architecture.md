@@ -252,7 +252,8 @@ Short form. The details are in the spec and in [roadmap.md](roadmap.md).
 - **P1b, agentless telemetry [planned].** ArgoCD's own notifications
   controller posts Application events to `POST /api/v1alpha1/app-events`.
   Nothing from Babis runs on the edge. Fallback for edges that cannot
-  install a CronJob.
+  install a CronJob. Design:
+  [0003 spec](../changes/0003-agentless-telemetry/spec.md).
 - **P2, bootstrap [planned].** `babis bootstrap` installs ArgoCD with Helm
   (shell-out to `helm`), writes identity labels on the cluster secret
   `in-cluster`, and reads edge config from the ConfigMap `babis-edge`.

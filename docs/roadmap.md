@@ -41,10 +41,10 @@ operator.
 
 For edges where nothing can be installed. ArgoCD's own notifications
 controller posts Application events to central. Zero Babis footprint on the
-edge. Starts with a spike on kind that checks the four open items in the
-spec.
+edge. Design: [changes/0003-agentless-telemetry/spec.md](../changes/0003-agentless-telemetry/spec.md).
 
-- [ ] Spike: confirm the notification template on a real ArgoCD
+- [x] Spike: confirm the notification template on a real ArgoCD
+  ([spike.md](../changes/0003-agentless-telemetry/spike.md))
 - [ ] Wire: `app-event` schema and fixtures
 - [ ] Operator: `POST /api/v1alpha1/app-events`, per-edge coalescing,
   stale-app prune, `status.telemetry.source`
