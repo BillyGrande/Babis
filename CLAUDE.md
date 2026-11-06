@@ -56,6 +56,8 @@ make build             # bin/babis-operator and bin/babis (static musl, cargo zi
 make build-edge-arm64  # bin/babis-linux-arm64
 make generate manifests  # controller-gen: deepcopy, CRD, RBAC (central/config/)
 make edge-budget       # edge binary <= 3 MB, peak RSS <= 5 MB at 300 apps
+make release-binaries VERSION=v0.1.0   # bin/*-linux-{amd64,arm64} + SHA256SUMS
+make release-manifests VERSION=v0.1.0  # bin/babis-{central,edge}.yaml with ghcr.io images
 make images            # babis-edge:dev, babis-operator:dev (images-arm64 for the edge)
 make e2e               # kind end-to-end, ~12 min, needs docker + internet
 ```

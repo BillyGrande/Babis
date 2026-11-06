@@ -103,6 +103,7 @@ Ideas that pass the litmus tests but have no phase yet.
   § Beyond 5000); waits for a load run that shows the need
 - Edge-side queueing for long WAN outages (cron retries are enough now)
 - Multi-tenancy: Edge namespaces per team, RBAC guidance
+- Release signing (cosign) and SBOMs
 - Fleet rollout objects, imperative commands, air-gap telemetry relays
 
 ## Explicit non-goals

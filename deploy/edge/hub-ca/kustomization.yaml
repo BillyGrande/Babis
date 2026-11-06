@@ -1,0 +1,30 @@
+# Trust a private CA for the hub. Needs ConfigMap babis-hub-ca (key ca.crt)
+# in the edge namespace. Use it as a component from an overlay.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: CronJob
+      name: babis-checkin
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/volumes
+        value:
+          - name: hub-ca
+            configMap:
+              name: babis-hub-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: hub-ca
+            mountPath: /etc/babis/hub-ca
+            readOnly: true
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/args/-
+        value: --hub-ca
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/args/-
+        value: /etc/babis/hub-ca/ca.crt

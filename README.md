@@ -112,6 +112,36 @@ token per fleet) see [deploy/README.md](deploy/README.md). In production,
 put your own TLS ingress in front of the operator port `8090`; Babis does
 not terminate TLS.
 
+## Install a release
+
+Each release has multi-arch images (amd64, arm64) on `ghcr.io/billygrande`.
+Replace `<tag>` with a release tag, for example `v0.1.0`.
+
+```bash
+BASE=https://github.com/BillyGrande/Babis/releases/download/<tag>
+
+# Central cluster: namespaces, CRD, RBAC, operator.
+kubectl apply -f $BASE/babis-central.yaml
+TOKEN="$(openssl rand -hex 32)"
+kubectl -n babis-system create secret generic babis-ingest-token --from-literal=token="$TOKEN"
+
+# Each edge (needs ArgoCD in namespace argocd): use the same token.
+kubectl -n argocd create secret generic babis-token --from-literal=token="$TOKEN"
+kubectl apply -f $BASE/babis-edge.yaml
+kubectl -n argocd patch configmap babis-edge --type=merge \
+  -p '{"data":{"hub":"https://babis.example.com","edgeName":"my-edge-01"}}'
+```
+
+`hub` is the URL of the operator ingest Service. `edgeName` must be unique in
+the fleet.
+
+To verify the binaries, download them and `SHA256SUMS` from the same release.
+Then run:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
 ## What Babis is not
 
 Babis distributes no manifests between clusters, opens no connections into
