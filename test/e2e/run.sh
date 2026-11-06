@@ -14,6 +14,13 @@ KEEP="${KEEP:-0}"
 NS_FLEET=babis-fleet
 EDGE=e2e-edge
 HUB=http://babis-operator.babis-system.svc:8090
+# Scenario 6: Traefik terminates TLS for this name.
+TLS_HOST=babis.e2e.test
+# Traefik Helm chart (app v3.7.17). Pinned on 2026-11-05; newest release then
+# (https://github.com/traefik/traefik-helm-chart/releases).
+# ingress-nginx is retired upstream, so we do not use it.
+TRAEFIK_CHART=oci://ghcr.io/traefik/helm/traefik
+TRAEFIK_VERSION=42.3.0
 
 CLUSTER=""
 TMP="$(mktemp -d)"
@@ -42,6 +49,8 @@ fail() {
   if [ -n "$pod" ]; then kubectl -n argocd logs "$pod" >&2 || true; else echo "(no job pod)" >&2; fi
   echo "--- operator logs" >&2
   kubectl -n babis-system logs deploy/babis-operator --tail=30 >&2 || true
+  echo "--- traefik logs" >&2
+  kubectl -n traefik logs deploy/traefik --tail=30 >&2 || echo "(no traefik)" >&2
   exit 1
 }
 
@@ -87,6 +96,31 @@ preload_image() {
     docker exec "$node" ctr -n k8s.io images tag "$mirror" "$image" >/dev/null ||
     fail "cannot pull $image or $mirror"
 }
+
+# tune_edge HUB_URL: test settings on top of deploy/edge (hub, edge name, a
+# one-minute schedule, 5s jitter). "kubectl apply -k" resets them, so call
+# this again after each apply.
+tune_edge() {
+  kubectl -n argocd patch configmap babis-edge --type=merge \
+    -p "{\"data\":{\"hub\":\"$1\",\"edgeName\":\"$EDGE\"}}"
+  kubectl -n argocd patch cronjob babis-checkin --type=merge -p '{"spec":{"schedule":"* * * * *"}}'
+  kubectl -n argocd patch cronjob babis-checkin --type=json \
+    -p '[{"op":"test","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/5","value":"--jitter"},{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/6","value":"5s"}]'
+}
+
+# True when the newest check-in Job is done and has the hub CA and the host
+# alias. The CronJob gets the alias as its last patch, so such a Job also
+# has the https hub URL.
+https_job_done() {
+  local job
+  job="$(kubectl -n argocd get jobs --sort-by=.metadata.creationTimestamp -o name | tail -1)"
+  [ -n "$job" ] || return 1
+  [ "$(kubectl -n argocd get "$job" -o 'jsonpath={.status.succeeded}')" = "1" ] &&
+    kubectl -n argocd get "$job" -o 'jsonpath={.spec.template.spec.containers[0].args}' | grep -q -- '--hub-ca' &&
+    [ -n "$(kubectl -n argocd get "$job" -o 'jsonpath={.spec.template.spec.hostAliases}')" ]
+}
+# checkin_after TIME: lastCheckinTime is later than TIME (both RFC 3339, UTC).
+checkin_after() { [[ "$(edge_jp '{.status.lastCheckinTime}')" > "$1" ]]; }
 
 run_version() {
   VERSION=$1
@@ -149,11 +183,7 @@ APP
   kubectl -n babis-system rollout status deploy/babis-operator --timeout=180s
 
   kubectl apply -k deploy/edge
-  kubectl -n argocd patch configmap babis-edge --type=merge \
-    -p "{\"data\":{\"hub\":\"$HUB\",\"edgeName\":\"$EDGE\"}}"
-  kubectl -n argocd patch cronjob babis-checkin --type=merge -p '{"spec":{"schedule":"* * * * *"}}'
-  kubectl -n argocd patch cronjob babis-checkin --type=json \
-    -p '[{"op":"test","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/5","value":"--jitter"},{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/containers/0/args/6","value":"5s"}]'
+  tune_edge "$HUB"
 
   # 1. Edge appears and is healthy.
   wait_for "edge $EDGE: version $VERSION, appsTotal=3, ArgoCDReady=True, Reachable=True" 240 first_ok
@@ -192,6 +222,64 @@ APP
     echo "$table" | head -1 | grep -qw "$col" || fail "printer column $col missing"
   done
   log "ok: printer columns"
+
+  # 6. Check-ins over HTTPS through an ingress, with a private CA.
+  # Traefik terminates TLS for $TLS_HOST. The name resolves through
+  # hostAliases on the CronJob Pod (test only). The edge still sends the
+  # real name as SNI and checks the certificate against the test CA.
+  helm install traefik "$TRAEFIK_CHART" --version "$TRAEFIK_VERSION" \
+    --namespace traefik --create-namespace --set service.type=ClusterIP \
+    --wait --timeout 300s >/dev/null
+  local ip
+  ip="$(kubectl -n traefik get svc traefik -o 'jsonpath={.spec.clusterIP}')"
+  [ -n "$ip" ] || fail "traefik Service has no ClusterIP"
+  log "ok: traefik $TRAEFIK_VERSION ready at $ip"
+
+  openssl ecparam -name prime256v1 -genkey -noout -out "$TMP/ca.key"
+  openssl req -x509 -new -key "$TMP/ca.key" -sha256 -days 2 -subj "/CN=Babis e2e CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -out "$TMP/ca.crt"
+  openssl ecparam -name prime256v1 -genkey -noout -out "$TMP/tls.key"
+  openssl req -new -key "$TMP/tls.key" -subj "/CN=$TLS_HOST" -out "$TMP/tls.csr"
+  printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' \
+    "$TLS_HOST" >"$TMP/tls.ext"
+  openssl x509 -req -in "$TMP/tls.csr" -CA "$TMP/ca.crt" -CAkey "$TMP/ca.key" \
+    -CAcreateserial -sha256 -days 2 -extfile "$TMP/tls.ext" -out "$TMP/tls.crt" 2>/dev/null
+  kubectl -n babis-system create secret tls babis-hub-tls --cert="$TMP/tls.crt" --key="$TMP/tls.key"
+  kubectl apply -f - <<INGRESS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: babis-operator
+  namespace: babis-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [$TLS_HOST]
+      secretName: babis-hub-tls
+  rules:
+    - host: $TLS_HOST
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: babis-operator
+                port:
+                  number: 8090
+INGRESS
+  kubectl -n argocd create configmap babis-hub-ca --from-file=ca.crt="$TMP/ca.crt"
+
+  local switch
+  switch="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  kubectl apply -k test/e2e/tls
+  tune_edge "https://$TLS_HOST"
+  kubectl -n argocd patch cronjob babis-checkin --type=json -p "[{\"op\":\"add\",\"path\":\"/spec/jobTemplate/spec/template/spec/hostAliases\",\"value\":[{\"ip\":\"$ip\",\"hostnames\":[\"$TLS_HOST\"]}]}]"
+  wait_for "a check-in Job with --hub-ca succeeded" 240 https_job_done
+  wait_for "lastCheckinTime after $switch (check-in over https)" 240 checkin_after "$switch"
+  wait_for "Reachable=True over https" 120 cond_is Reachable True
 
   if [ "$KEEP" != "1" ]; then
     kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
