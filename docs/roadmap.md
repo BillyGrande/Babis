@@ -7,7 +7,7 @@ build record is in [plan.md](../changes/0002-redesign/plan.md). Feature
 ideas are checked against the litmus tests in
 [positioning.md](positioning.md) before they land here.
 
-## P1 - Telemetry *(current: done except release)*
+## P1 - Telemetry *(done: v0.1.0, 2026-11-06)*
 
 Read-only `babis checkin` on edges that already run ArgoCD, and a central
 operator.
@@ -28,10 +28,12 @@ operator.
 - [x] Load test and scale hardening (`make load`; 1000 edges, jitter,
   `--max-edges`, `--max-inflight`)
 - [x] Docs and a kind quickstart in the README
-- [ ] Release automation: versioned static binaries (linux amd64/arm64),
-  checksums, published images
-- [ ] First public release under github.com/BillyGrande/babis
-- [ ] HTTPS against a real hub (ingress with TLS) tested end to end
+- [x] Release automation: versioned static binaries (linux amd64/arm64),
+  checksums, published images (`.github/workflows/release.yml`)
+- [x] First public release under github.com/BillyGrande/babis (`v0.1.0`)
+- [x] HTTPS through an ingress with TLS tested end to end (kind e2e:
+  Traefik, private CA, `hub-ca` component). A hub with a public
+  certificate is not tested; the edge uses the compiled-in web roots for it
 - [x] Document the `--max-edges` overshoot (the count comes from the
   informer cache and can lag a few creates)
 

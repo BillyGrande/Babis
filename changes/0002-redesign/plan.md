@@ -1,6 +1,6 @@
 # Plan: P1 — Telemetry
 
-- **Status:** Accepted 2026-10-30 — steps 1–8 done; steps 9–10 (release, HTTPS) added and accepted 2026-11-05
+- **Status:** Done 2026-11-06 — P1 released as `v0.1.0` (steps 1–10; 9 and 10 added 2026-11-05)
 - **Date:** 2026-10-30
 - **Spec:** [spec.md § P1](spec.md#p1--telemetry), [§ Scale](spec.md#scale), [§ Language decision](spec.md#language-decision)
 
@@ -17,8 +17,8 @@
 | 6b. Scale hardening (added) | done | `50def5b`, `af0cfc2`, `6354811` |
 | 7. CI | done | `c850f93` (PR #1) |
 | 8. Docs | done | branch `p1-docs` |
-| 9. Release automation (added) | in progress | branch `p1-release` |
-| 10. HTTPS hub (added) | in progress | branch `p1-release` |
+| 9. Release automation (added) | done | `243db05` (PR #5), `v0.1.0-rc.1`, `v0.1.0` |
+| 10. HTTPS hub (added) | done | `7612b65` (PR #5) |
 
 Drift from the original plan, recorded here as CLAUDE.md requires:
 
@@ -405,6 +405,20 @@ checksums, `kubectl apply --dry-run=client`); local buildx multi-arch build;
 the dry-run job green on the PR; after `v0.1.0-rc.1`: the image index lists
 amd64 and arm64, and a smoke install on a real mixed-arch vcluster gives
 `Reachable=True` and `ArgoCDReady=True`.
+
+**Result** (2026-11-06, `v0.1.0-rc.1` on `f512d5a`):
+
+- Release: 7 assets, prerelease; both image indexes list amd64 and arm64
+  (plus buildx provenance); anonymous pull from ghcr works; the downloaded
+  binary passes `SHA256SUMS` and prints `babis 0.1.0-rc.1`.
+- Smoke install on a vcluster (AKS host, ArgoCD v3.3.4, 23 Applications)
+  with the release manifests unchanged: `Reachable=True`,
+  `ArgoCDReady=True` (5 components), apps 23 / synced 23 / healthy 20.
+  Check-in 137 ms. Everything removed afterwards.
+- Drift: the vcluster schedules only on the host's amd64 pool, so arm64 did
+  not run there. Both arm64 images ran locally under emulation instead
+  (`docker run --platform linux/arm64`).
+- `v0.1.0` tagged on the same commit.
 
 ### 10. HTTPS hub (added 2026-11-05)
 
