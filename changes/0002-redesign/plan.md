@@ -383,15 +383,22 @@ drift), `edge` (fmt, clippy, test, musl build, size budget), `contract`
   `bin/SHA256SUMS`. `release-manifests VERSION=` renders `deploy/central` and
   `deploy/edge` with `ghcr.io/billygrande/babis-{operator,edge}:<VERSION>`
   into `bin/babis-central.yaml` and `bin/babis-edge.yaml` (the `deploy/`
-  sources keep `:dev`). `make build` also writes the `-linux-amd64` names.
+  sources keep `:dev`). The temporary overlays are in `bin/overlay/` (drift:
+  not a temp dir; `make clean` removes them). `make build` also writes the
+  `-linux-amd64` names.
 - **Images:** both Dockerfiles copy `bin/<name>-linux-${TARGETARCH}` (no
   `RUN`, so buildx multi-arch needs no QEMU) and set OCI labels `source`,
-  `version`, `revision`.
+  `version`, `revision`. Drift: `ARG TARGETARCH` has no default. With a
+  default, BuildKit kept the default, and the arm64 image got the amd64
+  binary. The edge Dockerfile no longer has the `BINARY` arg.
 - **Workflow** `.github/workflows/release.yml`: on tag `v*` publish; on PRs
   that touch the release files, a dry run without push. Version check →
   `make check contract` → binaries → manifests → `make edge-budget` → buildx
   amd64+arm64 images to ghcr (`latest` only for non-rc) → `gh release
   create` (prerelease for rc) with binaries, `SHA256SUMS`, manifests.
+  Two jobs: `build` (read-only; uploads the release files as an artifact)
+  and `publish` (tags only; checks `SHA256SUMS`, builds the images again from
+  the same binaries, pushes, creates the release).
 
 **Proof:** `make release-binaries release-manifests` locally (arch, static,
 checksums, `kubectl apply --dry-run=client`); local buildx multi-arch build;
@@ -404,13 +411,15 @@ amd64 and arm64, and a smoke install on a real mixed-arch vcluster gives
 - **Edge test:** TLS fake hub (std `TcpListener` + `rustls`, already in the
   lock file through ureq; dev-dependency only) with a committed test CA and
   server cert. Cases: right CA → exit 0; no `--hub-ca` → exit 1; wrong CA →
-  exit 1.
+  exit 1. The test calls `hub::post` directly (`edge/tests/tls.rs`).
 - **Deploy:** kustomize Component `deploy/edge/hub-ca/` mounts ConfigMap
   `babis-hub-ca` and adds `--hub-ca`. TLS section in `deploy/README.md`.
-- **e2e scenario 6:** Traefik (pinned Helm chart; ingress-nginx is retired)
-  terminates TLS for `babis.e2e.test` with a cert from a test CA; CoreDNS
-  rewrites the name to Traefik; the edge switches to
-  `https://babis.e2e.test` with the `hub-ca` component.
+- **e2e scenario 6:** Traefik (Helm chart 42.3.0, pinned 2026-11-05;
+  ingress-nginx is retired) terminates TLS for `babis.e2e.test` with a cert
+  from a test CA; the edge switches to `https://babis.e2e.test` with the
+  `hub-ca` component (test overlay `test/e2e/tls/`). Drift: the name
+  resolves through `hostAliases` on the CronJob Pod (test only), not a
+  CoreDNS rewrite. The edge still sends the real name as SNI.
 
 **Proof:** `make edge-check`; `make e2e` green on both ArgoCD versions with
 `lastCheckinTime` advancing over https.
