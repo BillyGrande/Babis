@@ -1,8 +1,7 @@
 # Spec: agentless telemetry from ArgoCD notifications (P1b)
 
 - **Author:** BillyGrande (draft by Claude)
-- **Status:** Proposed 2026-11-06. Waits for review. Phase B starts after
-  this spec is accepted.
+- **Status:** Accepted 2026-11-07 (PR #7). Phase B: [plan.md](plan.md).
 - **Intent:** [intent.md](intent.md)
 - **Evidence:** [spike.md](spike.md) (ArgoCD v3.5.6 and v3.3.18 on kind)
 - **Replaces:** [0002 spec § P1b](../0002-redesign/spec.md#p1b--agentless-telemetry-argocd-notifications)
