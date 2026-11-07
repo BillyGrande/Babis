@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseOptions(t *testing.T) {
 	tests := []struct {
@@ -26,6 +29,28 @@ func TestParseOptions(t *testing.T) {
 			}
 			if o.qps != tc.qps || o.burst != tc.burst || o.maxEdges != tc.maxEdges || o.maxInflight != tc.maxInflight {
 				t.Errorf("got %+v", o)
+			}
+		})
+	}
+}
+
+func TestParseEventOptions(t *testing.T) {
+	tests := []struct {
+		name                   string
+		args                   []string
+		flush, touch, appStale time.Duration
+	}{
+		{"defaults", nil, 30 * time.Second, 5 * time.Minute, 45 * time.Minute},
+		{"overrides", []string{"--event-flush-interval=10s", "--event-touch-interval=1m", "--event-app-stale=2h"}, 10 * time.Second, time.Minute, 2 * time.Hour},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o, _, err := parseOptions(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o.eventFlush != tc.flush || o.eventTouch != tc.touch || o.eventAppStale != tc.appStale {
+				t.Errorf("got flush %s touch %s stale %s", o.eventFlush, o.eventTouch, o.eventAppStale)
 			}
 		})
 	}
