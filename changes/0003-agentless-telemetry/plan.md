@@ -8,6 +8,10 @@
 - **Step 1:** `spike/combined.sh` copies the parts of `run.sh` that it
   needs, in place of a shared `spike/lib.sh`. So `run.sh` stays unchanged
   and does not need a 54-minute re-run.
+- **Step 1 result:** `combined.sh` passed on v3.5.6 and v3.3.18 (a–d
+  all ok). The spec config stays as it is. The spec table now says
+  "Proved". A new app logs a few `oncePer` errors in its first seconds,
+  while its status is empty. They do not stop other apps.
 - **Step 5:**
   - `make central-check` also runs `go test -race ./internal/ingest/`.
   - A failed flush (3 conflicts or another error) also waits one flush

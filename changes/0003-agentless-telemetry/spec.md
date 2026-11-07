@@ -145,12 +145,11 @@ What the spike proved, and what phase B must still prove:
 | `toJson` on an empty status gives `null`, valid JSON | Proved (spike 4) |
 | `deleted` with the finalizer; nothing without it | Proved (spike 5) |
 | Nil-safe `oncePer` with `?.`, `??`, `[0:15]` | Proved for the separate heartbeat and change expressions (spike 2a) |
-| The combined `babis-state` expression | **Not run.** Phase B step 1 runs `spike/run.sh` with it and checks: a new state sends at once, a revisited state sends at the next bucket, one request per app per bucket when nothing changes |
+| The combined `babis-state` expression | Proved in phase B step 1 (`spike/combined.sh`, [spike.md § Combined trigger](spike.md#combined-trigger-phase-b-step-1)): a new state within 4 s, a revisited state 112–184 s after the next bucket start, at most 1 request per app per bucket when nothing changes |
 
-If the combined trigger fails in phase B step 1, the fallback is the
-two-trigger config from `spike.md` ("Corrected config"). It is proved, but
-it sends a revisited state only with the next heartbeat and it sends
-duplicates.
+The fallback, if a later ArgoCD version breaks the combined trigger, is the
+two-trigger config from `spike.md` ("Corrected config"). It sends a
+revisited state only with the next heartbeat, and it sends duplicates.
 
 ### Cost on the edge
 

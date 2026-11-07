@@ -355,7 +355,7 @@ Notes:
 - In v3.5.6 the intermediate state `Synced/Progressing` was also sent at once. It is a new key, so this is correct.
 - Steady state: about 1 request per app per 10 minutes. The first bucket after config also holds the start-up requests.
 - Requests per app at the end (v3.5.6 / v3.3.18): guestbook-1 11 / 10, guestbook-2 8 / 8, bad-path 5 / 5. Totals 24 / 23. All bodies were valid JSON.
-- `notified.notifications.argoproj.io` annotation at the end (v3.5.6 / v3.3.18): guestbook-1 11 keys, 1378 bytes / 10 keys, 1234 bytes. guestbook-2 8 keys, 956 / 959 bytes. bad-path 5 keys, 469 bytes in both. The key count equals the request count: one key per sent request. It grows without a limit (open point from item 6).
-- The 6 `failed to execute oncePer` lines in the first 60 s are the empty-status case of new apps, before the apps had any status. Nothing after that.
+- `notified.notifications.argoproj.io` annotation at the end (v3.5.6 / v3.3.18): guestbook-1 11 keys, 1378 bytes / 10 keys, 1234 bytes. guestbook-2 8 keys, 956 / 959 bytes. bad-path 5 keys, 469 bytes in both. The key count equals the request count: one key per sent request. The notifications engine keeps the newest 100 keys (see item 6, "Closed after the spike"), so it does not grow without a limit.
+- The 6 `failed to execute oncePer` lines in the first 60 s are the empty-status case of new apps, before the apps had any status. Nothing after that. These errors are not the "bad expression" failure of item 2a: the other apps kept sending, and the same app sent its state when the status was filled a few seconds later.
 
 Verdict: the spec config works on both versions.
