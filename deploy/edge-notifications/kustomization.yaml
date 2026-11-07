@@ -1,0 +1,10 @@
+# Report to the Babis hub through the ArgoCD notifications controller. No
+# CronJob and no install rights needed. Use it as a component from the
+# kustomization that already builds argocd-notifications-cm and
+# argocd-notifications-secret. Replace EDGE_NAME, HUB_URL and TOKEN in the
+# two patch files first (see deploy/README.md).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - path: argocd-notifications-cm.yaml
+  - path: argocd-notifications-secret.yaml

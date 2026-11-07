@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://babis.dev/schemas/v1alpha1/app-event.request.json",
+  "title": "Babis app event request",
+  "description": "Body of POST /api/v1alpha1/app-events, sent by the ArgoCD notifications controller on an edge. One Application per request. Unknown fields are allowed at every level. A null sync, health or revision means ArgoCD has not set the value yet; it is stored as an empty value.",
+  "type": "object",
+  "required": [
+    "edge",
+    "event",
+    "app"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "edge": {
+      "description": "Edge name. DNS-1123 subdomain: dot-separated labels of lowercase a-z, 0-9 and '-', each starting and ending alphanumeric; 1..253 chars.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "event": {
+      "description": "state: the Application exists with this state. deleted: the Application has a deletion timestamp.",
+      "type": "string",
+      "enum": [
+        "state",
+        "deleted"
+      ]
+    },
+    "app": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "sync": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 253
+        },
+        "health": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 253
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 253
+        }
+      }
+    }
+  }
+}

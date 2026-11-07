@@ -1,0 +1,44 @@
+# Adds only keys that start with "babis", and "subscriptions".
+# "subscriptions" is one key for the whole controller: this patch replaces
+# an existing value. See deploy/README.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+data:
+  service.webhook.babis: |
+    url: HUB_URL
+    headers:
+    - name: Authorization
+      value: Bearer $babis-token
+    - name: Content-Type
+      value: application/json
+  template.babis-app: |
+    webhook:
+      babis:
+        method: POST
+        path: /api/v1alpha1/app-events
+        body: |
+          {"edge": "EDGE_NAME",
+           "event": "{{if .app.metadata.deletionTimestamp}}deleted{{else}}state{{end}}",
+           "app": {"name": {{toJson .app.metadata.name}},
+                   "sync": {{toJson .app.status.sync.status}},
+                   "health": {{toJson .app.status.health.status}},
+                   "revision": {{toJson .app.status.sync.revision}}}}
+  trigger.babis-state: |
+    - when: "true"
+      # The state plus a 10-minute bucket of reconciledAt. A new state sends
+      # at once; every app sends its state once per bucket.
+      oncePer: >-
+        (app.status.sync?.status ?? "") + "/" +
+        (app.status.health?.status ?? "") + "/" +
+        (app.status.sync?.revision ?? "") + "/" +
+        (app.status.reconciledAt ?? "")[0:15]
+      send: [babis-app]
+  trigger.babis-deleted: |
+    - when: app.metadata.deletionTimestamp != nil
+      oncePer: app.metadata.deletionTimestamp
+      send: [babis-app]
+  subscriptions: |
+    - recipients: [babis]
+      triggers: [babis-state, babis-deleted]

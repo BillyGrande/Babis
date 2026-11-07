@@ -9,8 +9,17 @@ The check-in contract between the Rust edge and the Go operator.
 - `testdata/` - golden fixtures. Go (`central/internal/wire`) and Rust
   (`edge/tests/contract.rs`) both run every fixture. The Go test also
   validates each fixture against the schemas, so schema and code cannot drift.
+- `app-event.request.schema.json` - body of `POST /api/v1alpha1/app-events`,
+  sent by the ArgoCD notifications controller (change 0003).
+- `app-event-testdata/` - fixtures for the app-event request. Only Go
+  (`TestContractAppEvent` in `central/internal/wire`) reads them. They use
+  the same prefixes as `testdata/`: `request-*` and `invalid-request-*`.
 
-Both schemas are JSON Schema 2020-12 with `additionalProperties: true` at
+The app-event fixtures are not in `testdata/` on purpose. The Go and Rust
+contract tests read every entry of `testdata/` and fail on an unknown one.
+The edge never sends app events, so the Rust side does not test them.
+
+All schemas are JSON Schema 2020-12 with `additionalProperties: true` at
 every level. Every rule is in both implementations (`Validate()` in Go,
 `validate()` in Rust) and in the schema, except the label-prefix length
 limit (253), which is code-only.

@@ -13,6 +13,8 @@ ARGOCD_VERSIONS="${ARGOCD_VERSIONS:-v3.5.6 v3.3.18}"
 KEEP="${KEEP:-0}"
 NS_FLEET=babis-fleet
 EDGE=e2e-edge
+# Scenario 7: an edge that reports through ArgoCD notifications only.
+EDGE_NOTIF=e2e-notif
 HUB=http://babis-operator.babis-system.svc:8090
 # Scenario 6: Traefik terminates TLS for this name.
 TLS_HOST=babis.e2e.test
@@ -48,7 +50,11 @@ fail() {
     -o name 2>/dev/null | grep babis-checkin | tail -1 || true)"
   if [ -n "$pod" ]; then kubectl -n argocd logs "$pod" >&2 || true; else echo "(no job pod)" >&2; fi
   echo "--- operator logs" >&2
-  kubectl -n babis-system logs deploy/babis-operator --tail=30 >&2 || true
+  kubectl -n babis-system logs -l app.kubernetes.io/name=babis-operator --prefix --tail=30 >&2 || true
+  echo "--- notifications controller logs" >&2
+  kubectl -n argocd logs deploy/argocd-notifications-controller --tail=40 >&2 || true
+  echo "--- kubectl get edge $EDGE_NOTIF -o yaml" >&2
+  kubectl get edge "$EDGE_NOTIF" -n "$NS_FLEET" -o yaml >&2 || true
   echo "--- traefik logs" >&2
   kubectl -n traefik logs deploy/traefik --tail=30 >&2 || echo "(no traefik)" >&2
   exit 1
@@ -122,6 +128,49 @@ https_job_done() {
 # checkin_after TIME: lastCheckinTime is later than TIME (both RFC 3339, UTC).
 checkin_after() { [[ "$(edge_jp '{.status.lastCheckinTime}')" > "$1" ]]; }
 
+# Scenario 7 helpers. They use $EDGE, so run_version sets EDGE=$EDGE_NOTIF
+# for the scenario and puts it back at the end.
+notif_app() { # NAME [FINALIZER]: an Application that is not synced (cheap)
+  local fin=""
+  [ -z "${2:-}" ] || fin="  finalizers: [resources-finalizer.argocd.argoproj.io]"
+  kubectl apply -f - <<APP
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: $1
+  namespace: argocd
+$fin
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/argoproj/argocd-example-apps
+    targetRevision: HEAD
+    path: guestbook
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ns-$1
+APP
+}
+has_app() { [ -n "$(edge_jp "{.status.apps[?(@.name==\"$1\")].name}")" ]; }
+no_app() { ! has_app "$1"; }
+notif_first() {
+  [ "$(edge_jp '{.status.telemetry.source}')" = "argocd-notifications" ] &&
+    [ "$(edge_jp '{.status.appsTotal}')" = "3" ] &&
+    [ "$(cond Reachable)" = "True" ] && [ "$(cond ArgoCDReady)" = "Unknown" ] &&
+    [ "$(edge_jp '{.status.conditions[?(@.type=="ArgoCDReady")].reason}')" = "NotReported" ]
+}
+app_gone() { ! kubectl -n argocd get app "$1" >/dev/null 2>&1; }
+notif_restart() {
+  kubectl -n argocd rollout restart deploy/argocd-notifications-controller
+  kubectl -n argocd rollout status deploy/argocd-notifications-controller --timeout=180s
+}
+# set_webhook_url URL: change the url line of service.webhook.babis.
+set_webhook_url() {
+  sed "s|^    url: .*|    url: $1|" "$TMP/notif-cm.yaml" >"$TMP/notif-cm-url.yaml"
+  kubectl -n argocd patch configmap argocd-notifications-cm --type merge --patch-file "$TMP/notif-cm-url.yaml"
+  notif_restart
+}
+
 run_version() {
   VERSION=$1
   CLUSTER="babis-e2e-${VERSION#v}"
@@ -179,7 +228,10 @@ APP
 
   kubectl apply -k deploy/central
   kubectl -n babis-system patch deploy babis-operator --type=json \
-    -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--heartbeat-timeout=2m"}]'
+    -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--heartbeat-timeout=2m"},
+         {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--event-flush-interval=5s"},
+         {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--event-touch-interval=30s"},
+         {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--notifications-heartbeat-timeout=2m"}]'
   kubectl -n babis-system rollout status deploy/babis-operator --timeout=180s
 
   kubectl apply -k deploy/edge
@@ -280,6 +332,53 @@ INGRESS
   wait_for "a check-in Job with --hub-ca succeeded" 240 https_job_done
   wait_for "lastCheckinTime after $switch (check-in over https)" 240 checkin_after "$switch"
   wait_for "Reachable=True over https" 120 cond_is Reachable True
+
+  # 7. An edge without install rights: ArgoCD notifications only, no CronJob.
+  # The CronJob edge ($EDGE) stays. The new edge is $EDGE_NOTIF.
+  local t7=$SECONDS cron_edge=$EDGE
+  EDGE=$EDGE_NOTIF
+  sed -e "s|EDGE_NAME|$EDGE_NOTIF|" -e "s|HUB_URL|$HUB|" \
+    deploy/edge-notifications/argocd-notifications-cm.yaml >"$TMP/notif-cm.yaml"
+  sed -e "s|TOKEN|$token|" deploy/edge-notifications/argocd-notifications-secret.yaml >"$TMP/notif-secret.yaml"
+  kubectl -n argocd patch secret argocd-notifications-secret --type merge --patch-file "$TMP/notif-secret.yaml"
+  kubectl -n argocd patch configmap argocd-notifications-cm --type merge --patch-file "$TMP/notif-cm.yaml"
+  notif_restart
+  wait_for "7.1 edge $EDGE: source argocd-notifications, appsTotal=3, Reachable=True, ArgoCDReady=Unknown/NotReported" 120 notif_first
+  log "7.1 done at $((SECONDS - t7))s"
+
+  # 7.2 A new app arrives; a deleted app (with the finalizer) leaves at once.
+  notif_app notif-app finalizer
+  wait_for "7.2 notif-app is in $EDGE status.apps" 90 has_app notif-app
+  kubectl -n argocd delete app notif-app --wait=false
+  wait_for "7.2 notif-app left status.apps (deleted event)" 90 no_app notif-app
+  wait_for "7.2 notif-app is gone from the cluster (finalizer done)" 120 app_gone notif-app
+  log "7.2 done at $((SECONDS - t7))s"
+
+  # 7.3 Hub unreachable from the notifications controller: Reachable=False.
+  kubectl -n "$NS_FLEET" patch edge "$EDGE" --type merge -p '{"spec":{"heartbeatTimeout":"1m"}}'
+  notif_app notif-hb-1
+  wait_for "7.3 notif-hb-1 is in status.apps" 90 has_app notif-hb-1
+  wait_for "7.3 Reachable=True before the break" 60 cond_is Reachable True
+  set_webhook_url http://no-such-hub.invalid:8090
+  wait_for "7.3 Reachable=False with an unresolvable webhook URL" 240 cond_is Reachable False
+  set_webhook_url "$HUB"
+  notif_app notif-hb-2
+  wait_for "7.3 notif-hb-2 is in status.apps" 120 has_app notif-hb-2
+  wait_for "7.3 Reachable=True after the URL is restored and a new app" 120 cond_is Reachable True
+  log "7.3 done at $((SECONDS - t7))s"
+
+  # 7.4 HTTPS with the private CA of scenario 6. The CA goes in
+  # argocd-tls-certs-cm under the host name. The name resolves through a
+  # hostAlias on the notifications controller Pod (test only).
+  { printf 'data:\n  %s: |\n' "$TLS_HOST"; sed 's/^/    /' "$TMP/ca.crt"; } >"$TMP/tls-certs-cm.yaml"
+  kubectl -n argocd patch configmap argocd-tls-certs-cm --type merge --patch-file "$TMP/tls-certs-cm.yaml"
+  kubectl -n argocd patch deploy argocd-notifications-controller --type merge \
+    -p "{\"spec\":{\"template\":{\"spec\":{\"hostAliases\":[{\"ip\":\"$ip\",\"hostnames\":[\"$TLS_HOST\"]}]}}}}"
+  set_webhook_url "https://$TLS_HOST"
+  notif_app notif-https
+  wait_for "7.4 notif-https is in status.apps (webhook over https, private CA)" 120 has_app notif-https
+  log "ok: scenario 7 took $((SECONDS - t7))s"
+  EDGE=$cron_edge
 
   if [ "$KEEP" != "1" ]; then
     kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true

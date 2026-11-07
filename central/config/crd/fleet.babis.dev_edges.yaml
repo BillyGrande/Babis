@@ -38,6 +38,10 @@ spec:
     - jsonPath: .status.lastCheckinTime
       name: LAST CHECKIN
       type: date
+    - jsonPath: .status.telemetry.source
+      name: SOURCE
+      priority: 1
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -87,6 +91,12 @@ spec:
                   description: App is one ArgoCD Application, with ArgoCD's own values.
                   properties:
                     health:
+                      type: string
+                    lastSeen:
+                      description: |-
+                        LastSeen is the receipt time of the last event for this app. Only
+                        notification edges set it.
+                      format: date-time
                       type: string
                     name:
                       type: string
@@ -190,6 +200,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              deletedApps:
+                description: |-
+                  DeletedApps are apps removed by an ArgoCD notification `deleted` event.
+                  They are kept for --event-app-stale so that an older event from another
+                  replica does not add the app again. Only notification edges set it.
+                items:
+                  description: |-
+                    DeletedApp is a tombstone for an app that an ArgoCD notification `deleted`
+                    event removed.
+                  properties:
+                    deletedAt:
+                      description: DeletedAt is the receipt time of the deleted event.
+                      format: date-time
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - deletedAt
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               labels:
                 additionalProperties:
                   type: string
@@ -206,7 +238,7 @@ spec:
                 description: Telemetry says where the status data came from.
                 properties:
                   source:
-                    description: Source is "checkin" in P1.
+                    description: Source is "checkin" or "argocd-notifications".
                     type: string
                 type: object
             type: object

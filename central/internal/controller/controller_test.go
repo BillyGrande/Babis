@@ -81,6 +81,60 @@ func TestArgoCDReadiness(t *testing.T) {
 	}
 }
 
+func TestArgoCDReadinessFor(t *testing.T) {
+	last := t0
+	bad := []v1alpha1.Component{{Name: "a", Ready: 0, Desired: 1}}
+	tests := []struct {
+		name   string
+		source string
+		last   *time.Time
+		comps  []v1alpha1.Component
+		status metav1.ConditionStatus
+		reason string
+	}{
+		{"checkin ready", v1alpha1.TelemetrySourceCheckin, &last, []v1alpha1.Component{{Name: "a", Ready: 1, Desired: 1}}, metav1.ConditionTrue, "AllComponentsReady"},
+		{"checkin not ready", v1alpha1.TelemetrySourceCheckin, &last, bad, metav1.ConditionFalse, "ComponentsNotReady"},
+		{"empty source is checkin", "", &last, bad, metav1.ConditionFalse, "ComponentsNotReady"},
+		{"notifications", v1alpha1.TelemetrySourceNotifications, &last, nil, metav1.ConditionUnknown, "NotReported"},
+		{"notifications ignores comps", v1alpha1.TelemetrySourceNotifications, &last, bad, metav1.ConditionUnknown, "NotReported"},
+		{"notifications never", v1alpha1.TelemetrySourceNotifications, nil, nil, metav1.ConditionUnknown, "NeverCheckedIn"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, r, m := ArgoCDReadinessFor(tc.source, tc.last, tc.comps)
+			if s != tc.status || r != tc.reason {
+				t.Fatalf("got %v %q (%s), want %v %q", s, r, m, tc.status, tc.reason)
+			}
+		})
+	}
+}
+
+func TestHeartbeatTimeout(t *testing.T) {
+	d := func(x time.Duration) *metav1.Duration { return &metav1.Duration{Duration: x} }
+	const checkin, notif = 15 * time.Minute, 30 * time.Minute
+	tests := []struct {
+		name     string
+		override *metav1.Duration
+		source   string
+		notif    time.Duration
+		want     time.Duration
+	}{
+		{"checkin default", nil, v1alpha1.TelemetrySourceCheckin, notif, checkin},
+		{"empty source default", nil, "", notif, checkin},
+		{"notifications default", nil, v1alpha1.TelemetrySourceNotifications, notif, notif},
+		{"notifications zero falls back", nil, v1alpha1.TelemetrySourceNotifications, 0, checkin},
+		{"override on checkin", d(time.Minute), v1alpha1.TelemetrySourceCheckin, notif, time.Minute},
+		{"override on notifications", d(time.Hour), v1alpha1.TelemetrySourceNotifications, notif, time.Hour},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HeartbeatTimeout(tc.override, tc.source, checkin, tc.notif); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReconcile(t *testing.T) {
 	now := t0.Add(5 * time.Minute)
 	checkin := func(ago time.Duration) *metav1.Time {
@@ -109,6 +163,12 @@ func TestReconcile(t *testing.T) {
 			Spec:   v1alpha1.EdgeSpec{HeartbeatTimeout: &metav1.Duration{Duration: 4 * time.Hour}},
 			Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(time.Hour), ArgoCD: healthy}},
 			metav1.ConditionTrue, metav1.ConditionTrue, 3 * time.Hour},
+		{"notifications fresh", v1alpha1.Edge{Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(20 * time.Minute),
+			Telemetry: v1alpha1.Telemetry{Source: v1alpha1.TelemetrySourceNotifications}}},
+			metav1.ConditionTrue, metav1.ConditionUnknown, 10 * time.Minute},
+		{"notifications stale", v1alpha1.Edge{Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(40 * time.Minute),
+			Telemetry: v1alpha1.Telemetry{Source: v1alpha1.TelemetrySourceNotifications}}},
+			metav1.ConditionFalse, metav1.ConditionUnknown, 0},
 		{"component down", v1alpha1.Edge{Status: v1alpha1.EdgeStatus{LastCheckinTime: checkin(time.Minute),
 			ArgoCD: v1alpha1.ArgoCDStatus{Components: []v1alpha1.Component{{Name: "a", Ready: 0, Desired: 1}}}}},
 			metav1.ConditionTrue, metav1.ConditionFalse, 14 * time.Minute},
@@ -122,7 +182,7 @@ func TestReconcile(t *testing.T) {
 			tc.edge.Name, tc.edge.Namespace = "e1", "fleet"
 			c := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&v1alpha1.Edge{}).WithObjects(&tc.edge).Build()
-			r := &EdgeReconciler{Client: c, DefaultHeartbeatTimeout: 15 * time.Minute, Now: func() time.Time { return now }}
+			r := &EdgeReconciler{Client: c, DefaultHeartbeatTimeout: 15 * time.Minute, NotificationsHeartbeatTimeout: 30 * time.Minute, Now: func() time.Time { return now }}
 			key := types.NamespacedName{Namespace: "fleet", Name: "e1"}
 
 			res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})

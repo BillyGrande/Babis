@@ -141,6 +141,26 @@ def main():
         print("  notified annotation at the end: %d keys, %d bytes" % (len(last), len(json.dumps(last))))
         for k2 in sorted(last)[:3]:
             print("    key: %s -> %s" % (k2, last[k2]))
+    elif cmd == "buckets":  # SINCE : requests per app per 10 min bucket of reconciledAt; exit 1 if any count > 1
+        by = collections.defaultdict(list)
+        for e in ev:
+            if e["time"] < args[0] or e["trigger"] != "state":
+                continue
+            r = ((e["parsed"] or {}).get("app") or {}).get("reconciledAt")
+            b = (r[:15] + "0") if r else (e["time"][:15] + "0 (receipt time)")
+            by[(e["app"], b)].append(e["time"][11:19])
+        worst = 0
+        for (a, b), t in sorted(by.items()):
+            worst = max(worst, len(t))
+            print("%-14s bucket %s  requests=%d  at %s" % (a, b, len(t), " ".join(t)))
+        print("max requests per app per bucket: %d" % worst)
+        sys.exit(1 if worst > 1 else 0)
+    elif cmd == "statefirst":  # APP SYNC HEALTH SINCE : time of first request with this state, empty if none
+        for e in ev:
+            a = (e["parsed"] or {}).get("app") or {}
+            if e["app"] == args[0] and e["time"] >= args[3] and a.get("sync") == args[1] and a.get("health") == args[2]:
+                print(e["time"])
+                break
     elif cmd == "annot":  # prints size of notified annotation from a JSON Application on stdin
         a = json.load(sys.stdin)["metadata"].get("annotations", {}).get("notified.notifications.argoproj.io", "{}")
         print("notified annotation: %d keys, %d bytes" % (len(json.loads(a)), len(a)))

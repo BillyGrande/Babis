@@ -35,7 +35,8 @@ func main() {
 
 type options struct {
 	fleetNS, ingestAddr, metricsAddr, healthAddr string
-	heartbeat                                    time.Duration
+	heartbeat, notificationsHeartbeat            time.Duration
+	eventFlush, eventTouch, eventAppStale        time.Duration
 	leaderElect, insecure                        bool
 	qps                                          float64
 	burst, maxEdges, maxInflight                 int
@@ -47,6 +48,10 @@ func parseOptions(args []string) (*options, *zap.Options, error) {
 	fs.StringVar(&o.fleetNS, "fleet-namespace", "babis-fleet", "namespace that holds Edge objects")
 	fs.StringVar(&o.ingestAddr, "ingest-addr", ":8090", "listen address of the check-in API")
 	fs.DurationVar(&o.heartbeat, "heartbeat-timeout", 15*time.Minute, "default time without check-in before an edge is unreachable")
+	fs.DurationVar(&o.notificationsHeartbeat, "notifications-heartbeat-timeout", 30*time.Minute, "default time without an ArgoCD notification event before a notification edge is unreachable")
+	fs.DurationVar(&o.eventFlush, "event-flush-interval", 30*time.Second, "least time between two flushes of one edge's app events on one replica")
+	fs.DurationVar(&o.eventTouch, "event-touch-interval", 5*time.Minute, "write an edge with only unchanged app states when its last check-in time is older than this")
+	fs.DurationVar(&o.eventAppStale, "event-app-stale", 45*time.Minute, "remove an app of a notification edge after this long without an event")
 	fs.StringVar(&o.metricsAddr, "metrics-addr", ":8080", "metrics listen address")
 	fs.StringVar(&o.healthAddr, "health-addr", ":8081", "health probe listen address")
 	fs.BoolVar(&o.leaderElect, "leader-elect", true, "enable leader election")
@@ -54,7 +59,7 @@ func parseOptions(args []string) (*options, *zap.Options, error) {
 	fs.Float64Var(&o.qps, "kube-api-qps", -1, "client-side Kubernetes API rate limit (queries per second) for the manager and the ingest client; negative disables client-side limiting (API Priority and Fairness applies), a positive value enables it")
 	fs.IntVar(&o.burst, "kube-api-burst", 0, "client-side Kubernetes API burst, used only when --kube-api-qps is positive")
 	fs.IntVar(&o.maxEdges, "max-edges", 2000, "refuse check-ins from new edges (429) when the fleet already has this many Edges")
-	fs.IntVar(&o.maxInflight, "max-inflight", 64, "maximum check-ins handled at once; others wait up to 20s, then get 503")
+	fs.IntVar(&o.maxInflight, "max-inflight", 64, "maximum check-ins and app events read at once; others wait (check-ins up to 20s, app events up to 2s), then get 503")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -106,13 +111,16 @@ func run() error {
 	}
 
 	if err := (&controller.EdgeReconciler{
-		Client:                  mgr.GetClient(),
-		DefaultHeartbeatTimeout: o.heartbeat,
+		Client:                        mgr.GetClient(),
+		DefaultHeartbeatTimeout:       o.heartbeat,
+		NotificationsHeartbeatTimeout: o.notificationsHeartbeat,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("controller: %w", err)
 	}
 
 	// Ingest reads straight from the API server so a fresh create is visible.
+	// The app-event flush reads from the cache first (Reader) and uses the
+	// direct client after a 409 Conflict.
 	direct, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return fmt.Errorf("ingest client: %w", err)
@@ -123,10 +131,17 @@ func run() error {
 		InsecureNoAuth: o.insecure,
 		Namespace:      o.fleetNS,
 		Client:         direct,
+		Reader:         mgr.GetClient(),
 		Index:          cacheIndex{c: mgr.GetCache()},
 		MaxEdges:       o.maxEdges,
 		MaxInflight:    o.maxInflight,
-		Log:            ctrl.Log.WithName("ingest"),
+
+		EventFlushInterval:      o.eventFlush,
+		EventTouchInterval:      o.eventTouch,
+		EventAppStale:           o.eventAppStale,
+		CheckinHeartbeatTimeout: o.heartbeat,
+
+		Log: ctrl.Log.WithName("ingest"),
 	})
 	if err != nil {
 		return err

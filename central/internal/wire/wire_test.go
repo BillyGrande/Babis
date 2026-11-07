@@ -114,3 +114,60 @@ func TestResponseValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestAppEventValidate(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("a", n) }
+	ok := func(mod func(*AppEventRequest)) AppEventRequest {
+		r := AppEventRequest{Edge: "e1", Event: EventState, App: AppEventApp{Name: "app", Sync: "Synced", Health: "Healthy", Revision: "abc"}}
+		mod(&r)
+		return r
+	}
+	tests := []struct {
+		name    string
+		req     AppEventRequest
+		wantErr string // substring; empty means valid
+	}{
+		{"valid", ok(func(*AppEventRequest) {}), ""},
+		{"deleted", ok(func(r *AppEventRequest) { r.Event = EventDeleted }), ""},
+		{"nulls", ok(func(r *AppEventRequest) { r.App.Sync, r.App.Health, r.App.Revision = "", "", "" }), ""},
+		{"edge empty", ok(func(r *AppEventRequest) { r.Edge = "" }), "edge:"},
+		{"edge upper", ok(func(r *AppEventRequest) { r.Edge = "E1" }), "edge:"},
+		{"edge 253", ok(func(r *AppEventRequest) { r.Edge = long(253) }), ""},
+		{"edge 254", ok(func(r *AppEventRequest) { r.Edge = long(254) }), "edge:"},
+		{"event empty", ok(func(r *AppEventRequest) { r.Event = "" }), "event:"},
+		{"event unknown", ok(func(r *AppEventRequest) { r.Event = "heartbeat" }), "event:"},
+		{"app missing", ok(func(r *AppEventRequest) { r.App = AppEventApp{} }), "app.name"},
+		{"app name 253", ok(func(r *AppEventRequest) { r.App.Name = long(253) }), ""},
+		{"app name 254", ok(func(r *AppEventRequest) { r.App.Name = long(254) }), "app.name"},
+		{"sync 253", ok(func(r *AppEventRequest) { r.App.Sync = long(253) }), ""},
+		{"sync 254", ok(func(r *AppEventRequest) { r.App.Sync = long(254) }), "app.sync"},
+		{"health 254", ok(func(r *AppEventRequest) { r.App.Health = long(254) }), "app.health"},
+		{"revision 254", ok(func(r *AppEventRequest) { r.App.Revision = long(254) }), "app.revision"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.req.Validate()
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tt.wantErr != "" && err == nil:
+				t.Fatalf("want error containing %q, got nil", tt.wantErr)
+			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
+				t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestAppEventValidateCollectsAll(t *testing.T) {
+	r := AppEventRequest{Edge: "BAD", Event: "x"}
+	err := r.Validate()
+	if err == nil {
+		t.Fatal("want error")
+	}
+	for _, want := range []string{"edge:", "event:", "app.name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}

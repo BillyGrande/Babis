@@ -11,7 +11,9 @@ import (
 	"strings"
 )
 
-const maxApps = 5000
+// MaxApps caps the apps in one check-in. Ingest uses the same cap per edge
+// for buffered app events.
+const MaxApps = 5000
 
 // CheckinRequest is the body of POST /api/v1alpha1/checkin. Optional
 // collections use omitzero so empty-but-present values round-trip.
@@ -98,8 +100,8 @@ func (r *CheckinRequest) Validate() error {
 			}
 		}
 	}
-	if len(r.Apps) > maxApps {
-		add("apps: at most %d items, got %d", maxApps, len(r.Apps))
+	if len(r.Apps) > MaxApps {
+		add("apps: at most %d items, got %d", MaxApps, len(r.Apps))
 	}
 	for i, a := range r.Apps {
 		if a.Name == "" || len(a.Name) > 253 {

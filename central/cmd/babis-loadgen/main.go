@@ -21,10 +21,35 @@ import (
 	"github.com/BillyGrande/babis/central/internal/wire"
 )
 
-const checkinPath = "/api/v1alpha1/checkin"
+const (
+	checkinPath   = "/api/v1alpha1/checkin"
+	appEventsPath = "/api/v1alpha1/app-events"
+	eventWorkers  = 128
+)
+
+// hubList is a repeatable --hub flag.
+type hubList []string
+
+func (h *hubList) String() string { return fmt.Sprint([]string(*h)) }
+func (h *hubList) Set(v string) error {
+	*h = append(*h, v)
+	return nil
+}
+
+// pickHub returns hub number i, round robin.
+func pickHub(hubs []string, i int) string { return hubs[i%len(hubs)] }
+
+// dueAt is the offset from the start at which request i may be sent at rate
+// requests per second.
+func dueAt(i int, rate float64) time.Duration {
+	return time.Duration(float64(i) / rate * float64(time.Second))
+}
 
 type config struct {
-	hub, token, prefix  string
+	hubs                hubList
+	mode                string
+	rate                float64
+	token, prefix       string
 	edges, apps, rounds int
 	spread, timeout     time.Duration
 	asJSON              bool
@@ -52,7 +77,9 @@ type RoundSummary struct {
 
 func main() {
 	var c config
-	flag.StringVar(&c.hub, "hub", "http://127.0.0.1:8090", "hub base URL")
+	flag.Var(&c.hubs, "hub", "hub base URL; repeat for several (round robin; default http://127.0.0.1:8090)")
+	flag.StringVar(&c.mode, "mode", "checkin", "checkin or events")
+	flag.Float64Var(&c.rate, "rate", 500, "events mode: requests per second")
 	flag.IntVar(&c.edges, "edges", 1000, "number of simulated edges")
 	flag.IntVar(&c.apps, "apps", 300, "ArgoCD Applications per edge")
 	flag.IntVar(&c.rounds, "rounds", 2, "check-in rounds")
@@ -62,6 +89,26 @@ func main() {
 	flag.BoolVar(&c.asJSON, "json", false, "print a machine-readable summary")
 	flag.Parse()
 	c.token = os.Getenv("BABIS_TOKEN")
+	if len(c.hubs) == 0 {
+		c.hubs = hubList{"http://127.0.0.1:8090"}
+	}
+	if c.mode != "checkin" && c.mode != "events" {
+		fmt.Fprintln(os.Stderr, "babis-loadgen: --mode must be checkin or events")
+		os.Exit(2)
+	}
+	if c.rate <= 0 {
+		fmt.Fprintln(os.Stderr, "babis-loadgen: --rate must be > 0")
+		os.Exit(2)
+	}
+	if c.mode == "events" {
+		s := runEvents(context.Background(), c)
+		logf(c, "events: requests=%d ok=%d errors=%v p50=%.0fms p95=%.0fms p99=%.0fms max=%.0fms wall=%.1fs %.0f req/s\n",
+			s.Requests, s.OK, s.Errors, s.P50ms, s.P95ms, s.P99ms, s.MaxMs, s.WallSec, s.ReqPerS)
+		if c.asJSON {
+			_ = json.NewEncoder(os.Stdout).Encode([]RoundSummary{s})
+		}
+		return
+	}
 
 	if c.edges < 1 || c.apps < 0 || c.rounds < 1 {
 		fmt.Fprintln(os.Stderr, "babis-loadgen: edges and rounds must be >= 1, apps >= 0")
@@ -123,15 +170,16 @@ func runRound(ctx context.Context, c config, client *http.Client, bodies [][]byt
 					return
 				}
 			}
-			results[i] = send(ctx, client, c, bodies[i])
+			results[i] = send(ctx, client, c, pickHub(c.hubs, i)+checkinPath, http.StatusOK, bodies[i])
 		}()
 	}
 	wg.Wait()
 	return summarize(round, results, time.Since(start))
 }
 
-func send(ctx context.Context, client *http.Client, c config, body []byte) result {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.hub+checkinPath, bytes.NewReader(body))
+// send posts body to url. okCode is the status that counts as success.
+func send(ctx context.Context, client *http.Client, c config, url string, okCode int, body []byte) result {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return result{kind: "transport"}
 	}
@@ -151,7 +199,7 @@ func send(ctx context.Context, client *http.Client, c config, body []byte) resul
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	lat := time.Since(t0)
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode == okCode {
 		return result{latency: lat, kind: "ok"}
 	}
 	return result{latency: lat, kind: fmt.Sprintf("http_%d", resp.StatusCode)}
@@ -241,4 +289,55 @@ func buildRequest(prefix string, i, apps int) *wire.CheckinRequest {
 		ArgoCD: &wire.ArgoCD{Version: "v3.5.6", Components: comps},
 		Apps:   list,
 	}
+}
+
+// runEvents sends every edge x app once as a state event at c.rate requests
+// per second, through a bounded worker pool. Connections are kept alive: a
+// notifications controller keeps its connection too, and a new connection per
+// event would measure the loopback, not the hub.
+func runEvents(ctx context.Context, c config) RoundSummary {
+	total := c.edges * c.apps
+	tr := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: c.timeout}).DialContext,
+		MaxIdleConnsPerHost: eventWorkers,
+	}
+	client := &http.Client{Transport: tr, Timeout: c.timeout}
+	results := make([]result, total)
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	start := time.Now()
+	for range eventWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				body := eventBody(c.prefix, i/c.apps, i%c.apps)
+				results[i] = send(ctx, client, c, pickHub(c.hubs, i)+appEventsPath, http.StatusAccepted, body)
+			}
+		}()
+	}
+	for i := range total {
+		if d := time.Until(start.Add(dueAt(i, c.rate))); d > 0 {
+			time.Sleep(d)
+		}
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return summarize(1, results, time.Since(start))
+}
+
+// eventBody returns the JSON of one state event for edge e, app a.
+func eventBody(prefix string, e, a int) []byte {
+	b, _ := json.Marshal(wire.AppEventRequest{
+		Edge:  fmt.Sprintf("%s-%05d", prefix, e),
+		Event: "state",
+		App: wire.AppEventApp{
+			Name:     fmt.Sprintf("app-%03d", a),
+			Sync:     syncVals[(e+a)%len(syncVals)],
+			Health:   healthVals[(e*7+a)%len(healthVals)],
+			Revision: fmt.Sprintf("%040x", uint64(e)<<20|uint64(a)),
+		},
+	})
+	return b
 }

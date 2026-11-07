@@ -326,3 +326,36 @@ Notes on the config:
 - In the template, `{{toJson .app.status.sync.status}}` worked on empty status in the spike. No nil-safe form is needed there.
 - The spike body also had `"reconciledAt": {{toJson .app.status.reconciledAt}}`. It is useful for the hub (age of the data) and valid with `null`.
 - Item 6 (annotation growth) and the revisit problem (surprise 1) are open design points for the spec.
+
+## Combined trigger (phase B step 1)
+
+- **Date:** 2026-11-07
+- **ArgoCD versions:** v3.5.6 and v3.3.18 (kind, `install.yaml` from upstream)
+- **Script:** `spike/combined.sh` (new; copies the helpers it needs from `run.sh`, no shared lib). `analyze.py` has two new subcommands: `buckets` and `statefirst`.
+- **Run time:** v3.5.6: 2198 s. v3.3.18: 2126 s. Both ran in parallel in one run (about 37 min).
+- **Config:** the `babis-state` and `babis-deleted` config from `spec.md` "Config", as it is. Instrumentation only: in-cluster URL, `?trigger=state` / `?trigger=deleted` in the paths (a second template for the deleted trigger), and `reconciledAt` in the body. Apps: guestbook-1, guestbook-2, bad-path.
+
+| Assert | v3.5.6 | v3.3.18 |
+|--------|--------|---------|
+| a. New state sent at once | ok. Scale at 01:24:25. Request `OutOfSync/Progressing` after 1 s, then `OutOfSync/Healthy` 0.7 s later. | ok. Request `OutOfSync/Healthy` after 4 s. |
+| b. Revisited state sent at the next bucket | ok. `Synced/Healthy` arrived 487 s after the scale back, 184 s after the next bucket start (01:30:00). The deadline was 01:35:00. | ok. 392 s after the scale back, 112 s after the next bucket start. |
+| c. Steady 20 min, at most 1 per app per bucket | ok. Max 1. Each app had 1 request in bucket 01:10 and 1 in bucket 01:20. | ok. Max 1. guestbook-1 and guestbook-2: 1 each in 01:10 and 01:20. bad-path also had 1 in 01:00. |
+| d. No `oncePer` errors after the first 60 s | ok. Before: 6. After: 0. | ok. Before: 6. After: 0. |
+
+Evidence for b (v3.5.6). The scale back was at 01:24:57:
+
+```
+01:24:58.291Z  Synced / Progressing  reconciledAt 01:24:26Z   (a new key: sent at once)
+01:33:04.338Z  Synced / Healthy      reconciledAt 01:33:04Z   (key changed with the new bucket)
+```
+
+Notes:
+
+- The `Synced/Healthy` state had been sent before in the same bucket (and earlier). It was sent again only when `reconciledAt` moved to the next bucket (01:30). The delay is up to one bucket plus one reconcile, as the spec says.
+- In v3.5.6 the intermediate state `Synced/Progressing` was also sent at once. It is a new key, so this is correct.
+- Steady state: about 1 request per app per 10 minutes. The first bucket after config also holds the start-up requests.
+- Requests per app at the end (v3.5.6 / v3.3.18): guestbook-1 11 / 10, guestbook-2 8 / 8, bad-path 5 / 5. Totals 24 / 23. All bodies were valid JSON.
+- `notified.notifications.argoproj.io` annotation at the end (v3.5.6 / v3.3.18): guestbook-1 11 keys, 1378 bytes / 10 keys, 1234 bytes. guestbook-2 8 keys, 956 / 959 bytes. bad-path 5 keys, 469 bytes in both. The key count equals the request count: one key per sent request. The notifications engine keeps the newest 100 keys (see item 6, "Closed after the spike"), so it does not grow without a limit.
+- The 6 `failed to execute oncePer` lines in the first 60 s are the empty-status case of new apps, before the apps had any status. Nothing after that. These errors are not the "bad expression" failure of item 2a: the other apps kept sending, and the same app sent its state when the status was filled a few seconds later.
+
+Verdict: the spec config works on both versions.

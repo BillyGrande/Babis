@@ -51,11 +51,12 @@ spec:
             requests:
               cpu: 50m
               memory: 128Mi
-            # Load test (1000 edges x 300 apps, burst): operator peak RSS
-            # 117 MiB. 192Mi keeps that under 75 % of the limit
-            # (117 / 0.75 = 156). Re-measure with `make load` when it changes.
+            # Load test (1000 edges x 300 apps): operator peak RSS 117 MiB for
+            # check-ins (scenario A) and 147 MiB for app events on two
+            # replicas (scenario C). 256Mi keeps that under 75 % of the limit
+            # (147 / 0.75 = 196). Re-measure with `make load` when it changes.
             limits:
-              memory: 192Mi
+              memory: 256Mi
           securityContext:
             runAsNonRoot: true
             readOnlyRootFilesystem: true

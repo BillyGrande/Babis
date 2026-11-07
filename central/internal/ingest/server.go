@@ -1,4 +1,6 @@
-// Package ingest serves the check-in API and turns check-ins into Edge status.
+// Package ingest serves the check-in and app-event API and turns both into
+// Edge status. A check-in is written at once; app events are buffered on each
+// replica and flushed (see flush.go).
 package ingest
 
 import (
@@ -44,17 +46,38 @@ type Config struct {
 	Namespace string
 	// Client should read without a stale cache, so a create is visible at once.
 	Client client.Client
+	// Reader is where a flush first reads an Edge. Normally the manager
+	// cache. After a 409 Conflict the flush reads with Client. Default Client.
+	Reader client.Reader
 	// Index answers "is this edge known" and "how many edges". Normally the
 	// manager cache. Nil disables the --max-edges check.
 	Index EdgeIndex
 	// MaxEdges caps the fleet; a check-in from a new edge beyond it gets 429.
 	// Default 2000.
 	MaxEdges int
-	// MaxInflight bounds the check-ins that are being read or written at once.
-	// Default 64.
+	// MaxInflight bounds the check-ins that are being read or written, and
+	// the app events that are being read, at once. Default 64.
 	MaxInflight int
-	// InflightWait is how long a request waits for a slot. Default 20 s.
+	// InflightWait is how long a check-in waits for a slot. Default 20 s.
 	InflightWait time.Duration
+	// EventInflightWait is how long an app event waits for a slot. Default 2 s.
+	EventInflightWait time.Duration
+	// EventFlushInterval is the least time between two flushes of one edge
+	// on this replica. Default 30 s.
+	EventFlushInterval time.Duration
+	// EventTouchInterval: an edge with only unchanged states is written when
+	// its lastCheckinTime is older than this. Default 5 min.
+	EventTouchInterval time.Duration
+	// EventAppStale removes an app with no event for this long. Default 45 min.
+	EventAppStale time.Duration
+	// CheckinHeartbeatTimeout is the operator's --heartbeat-timeout. While a
+	// check-in edge is fresh by this rule, its app events are dropped.
+	// Default 15 min.
+	CheckinHeartbeatTimeout time.Duration
+	// FlushWorkers bounds the edges flushed at once. Default 8.
+	FlushWorkers int
+	// FlushTick is how often the flusher looks for due edges. Default 1 s.
+	FlushTick time.Duration
 	// Now is the clock. Defaults to time.Now.
 	Now func() time.Time
 	// Log is optional.
@@ -66,6 +89,7 @@ type Server struct {
 	cfg       Config
 	tokenHash [sha256.Size]byte
 	slots     chan struct{}
+	buf       *buffer
 }
 
 // EdgeIndex is a cheap, cached view of the Edges that exist.
@@ -97,13 +121,33 @@ func New(cfg Config) (*Server, error) {
 	if cfg.InflightWait <= 0 {
 		cfg.InflightWait = 20 * time.Second
 	}
+	if cfg.Reader == nil {
+		cfg.Reader = cfg.Client
+	}
+	defaultDuration(&cfg.EventInflightWait, 2*time.Second)
+	defaultDuration(&cfg.EventFlushInterval, 30*time.Second)
+	defaultDuration(&cfg.EventTouchInterval, 5*time.Minute)
+	defaultDuration(&cfg.EventAppStale, 45*time.Minute)
+	defaultDuration(&cfg.CheckinHeartbeatTimeout, 15*time.Minute)
+	defaultDuration(&cfg.FlushTick, time.Second)
+	if cfg.FlushWorkers <= 0 {
+		cfg.FlushWorkers = 8
+	}
 	return &Server{
 		cfg: cfg, tokenHash: sha256.Sum256([]byte(cfg.Token)),
 		slots: make(chan struct{}, cfg.MaxInflight),
+		buf:   newBuffer(wire.MaxApps, cfg.MaxEdges),
 	}, nil
 }
 
-// NeedLeaderElection reports false: every replica accepts check-ins.
+func defaultDuration(d *time.Duration, def time.Duration) {
+	if *d <= 0 {
+		*d = def
+	}
+}
+
+// NeedLeaderElection reports false: every replica accepts check-ins and app
+// events, and flushes its own buffer.
 func (s *Server) NeedLeaderElection() bool { return false }
 
 // Handler returns the HTTP handler.
@@ -114,10 +158,13 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("POST "+CheckinPath, s.handleCheckin)
+	mux.HandleFunc("POST "+AppEventsPath, s.handleAppEvent)
 	return mux
 }
 
-// Start serves until ctx is cancelled, then shuts down gracefully.
+// Start serves and flushes app events until ctx is cancelled. Then it stops
+// the HTTP server first, so the events of requests in flight reach the
+// buffer, and then lets the flusher write what is left.
 func (s *Server) Start(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              s.cfg.Addr,
@@ -125,16 +172,26 @@ func (s *Server) Start(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
+	flushCtx, stopFlush := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopFlush()
+	flushDone := make(chan struct{})
+	go func() {
+		defer close(flushDone)
+		s.runFlusher(flushCtx)
+	}()
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
+	var err error
 	select {
-	case err := <-errCh:
-		return err
+	case err = <-errCh:
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err = srv.Shutdown(shutdownCtx)
+		cancel()
 	}
+	stopFlush()
+	<-flushDone
+	return err
 }
 
 func (s *Server) authorized(r *http.Request) bool {
@@ -259,13 +316,8 @@ func buildApply(namespace string, req *wire.CheckinRequest, now time.Time) apply
 	}
 	for _, a := range req.Apps {
 		st.Apps = append(st.Apps, v1alpha1.App{Name: a.Name, Sync: a.Sync, Health: a.Health, Revision: a.Revision})
-		if a.Sync == "Synced" {
-			st.AppsSynced++
-		}
-		if a.Health == "Healthy" {
-			st.AppsHealthy++
-		}
 	}
+	st.AppsSynced, st.AppsHealthy = countApps(st.Apps)
 	return applyEdge{
 		APIVersion: v1alpha1.GroupVersion.String(),
 		Kind:       "Edge",
