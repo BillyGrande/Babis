@@ -19,6 +19,16 @@
   - Open risk: at the caps (2000 edges × 5000 apps) the buffer can use
     more than 1 GB per replica. The expected use (1000 × 300) is about
     10–30 MB. Step 8 measures it against the 192Mi memory limit.
+- **Step 8:**
+  - Scenario C passed: 300000 of 300000 `202`, and all Edges correct. The
+    numbers are in the spec ("Measured").
+  - The peak RSS was 147 MiB per replica, so the memory limit in
+    `deploy/central/deployment.yaml` goes from 192Mi to 256Mi.
+  - 405 flushes ran out of their 3 conflict retries. They are normal under
+    load (the next interval repairs them), so they log at info level now,
+    not at error level.
+  - The loadgen keeps connections alive in events mode, as a notifications
+    controller does.
 
 ## Context
 

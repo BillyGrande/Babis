@@ -331,6 +331,24 @@ interval keeps notification edges near this rate. A request costs a
 SHA-256, a JSON decode of a body below 1 KB and a map write. Phase B
 proves the rate with `make load`.
 
+**Measured** (`make load` scenario C, 2026-11-07, kind API server, two
+replicas on one host). 1000 edges × 300 apps, each app sent once, at
+500 requests per second, round robin over both replicas:
+
+| Measure | Result |
+|---|---|
+| Answers | 300000 of 300000 `202`, 0 errors |
+| Latency | p95 2 ms, p99 3 ms, max 110 ms |
+| Status PATCH requests | 8458 in 642 s (13.2 per second), with 3425 `409` |
+| Flushes that ran out of retries | 405; the next interval repaired all of them |
+| Final state | 1000 of 1000 Edges with 300 apps and source `argocd-notifications`, 42 s after the last event |
+| Peak RSS per replica | about 147 MiB (cache and buffer) |
+
+This is the "all edges changing" case: every flush had new apps on both
+replicas, so the replicas often wrote the same Edge at the same time. A
+steady fleet has far fewer material flushes. The memory limit in
+`deploy/central` is now 256Mi (147 MiB is under 75 %).
+
 ## Wire
 
 - New schema `wire/app-event.request.schema.json`. It has the rules in

@@ -138,6 +138,12 @@ func (s *Server) flushEdge(ctx context.Context, name string, force bool) {
 		case apierrors.IsConflict(err) && attempt < flushAttempts:
 			reader = s.cfg.Client
 			continue
+		case apierrors.IsConflict(err):
+			// Another replica or the reconciler keeps writing the Edge. The
+			// entries stay, and the next flush interval tries again.
+			s.buf.restore(name, entries)
+			log.Info("flush: conflict on every attempt; retry at the next interval", "attempts", attempt)
+			return
 		default:
 			s.buf.restore(name, entries)
 			log.Error(err, "flush: apply status", "attempt", attempt)
