@@ -15,6 +15,9 @@ const (
 // TelemetrySourceCheckin marks status written from a `babis checkin`.
 const TelemetrySourceCheckin = "checkin"
 
+// TelemetrySourceNotifications marks status written from ArgoCD notification events.
+const TelemetrySourceNotifications = "argocd-notifications"
+
 // EdgeSpec is what admins say about the edge. Ingest never writes it.
 type EdgeSpec struct {
 	// DisplayName is a human-friendly name.
@@ -28,7 +31,7 @@ type EdgeSpec struct {
 
 // Telemetry says where the status data came from.
 type Telemetry struct {
-	// Source is "checkin" in P1.
+	// Source is "checkin" or "argocd-notifications".
 	// +optional
 	Source string `json:"source,omitempty"`
 }
@@ -59,6 +62,10 @@ type App struct {
 	Health string `json:"health,omitempty"`
 	// +optional
 	Revision string `json:"revision,omitempty"`
+	// LastSeen is the receipt time of the last event for this app. Only
+	// notification edges set it.
+	// +optional
+	LastSeen *metav1.MicroTime `json:"lastSeen,omitempty"`
 }
 
 // EdgeStatus is the observed state. Ingest writes everything except
@@ -105,6 +112,7 @@ type EdgeStatus struct {
 // +kubebuilder:printcolumn:name="HEALTHY",type=integer,JSONPath=`.status.appsHealthy`
 // +kubebuilder:printcolumn:name="REACHABLE",type=string,JSONPath=`.status.conditions[?(@.type=="Reachable")].status`
 // +kubebuilder:printcolumn:name="LAST CHECKIN",type=date,JSONPath=`.status.lastCheckinTime`
+// +kubebuilder:printcolumn:name="SOURCE",type=string,JSONPath=`.status.telemetry.source`,priority=1
 type Edge struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
