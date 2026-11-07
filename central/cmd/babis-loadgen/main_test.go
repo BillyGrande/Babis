@@ -94,3 +94,54 @@ func TestSummarize(t *testing.T) {
 		t.Errorf("unexpected summary: %+v", s)
 	}
 }
+
+func TestPickHub(t *testing.T) {
+	hubs := []string{"a", "b", "c"}
+	tests := []struct {
+		hubs []string
+		i    int
+		want string
+	}{
+		{[]string{"a"}, 7, "a"},
+		{hubs, 0, "a"},
+		{hubs, 1, "b"},
+		{hubs, 2, "c"},
+		{hubs, 3, "a"},
+	}
+	for _, tt := range tests {
+		if got := pickHub(tt.hubs, tt.i); got != tt.want {
+			t.Errorf("pickHub(%v, %d) = %q, want %q", tt.hubs, tt.i, got, tt.want)
+		}
+	}
+}
+
+func TestDueAt(t *testing.T) {
+	tests := []struct {
+		name string
+		i    int
+		rate float64
+		want time.Duration
+	}{
+		{"first", 0, 500, 0},
+		{"500/s, 1", 1, 500, 2 * time.Millisecond},
+		{"500/s, 500", 500, 500, time.Second},
+		{"10/s, 25", 25, 10, 2500 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		if got := dueAt(tt.i, tt.rate); got != tt.want {
+			t.Errorf("%s: dueAt = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestEventBodyValid(t *testing.T) {
+	for _, ea := range [][2]int{{0, 0}, {1, 2}, {999, 299}} {
+		var req wire.AppEventRequest
+		if err := json.Unmarshal(eventBody("load", ea[0], ea[1]), &req); err != nil {
+			t.Fatal(err)
+		}
+		if err := req.Validate(); err != nil {
+			t.Errorf("edge %d app %d: %v", ea[0], ea[1], err)
+		}
+	}
+}
