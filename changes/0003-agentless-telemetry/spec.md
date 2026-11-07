@@ -237,9 +237,16 @@ A flush does this:
      Another replica wrote a newer state.
    - `state`: set sync, health, revision and `lastSeen` (the receipt time).
      Add the app if it is not there.
-   - `deleted`: remove the app.
+   - The app has a tombstone in `status.deletedApps`, and a `state` entry
+     is older than or equal to it: skip the entry. The app was deleted
+     after this state, maybe through the other replica.
+   - `deleted`: remove the app, and set its tombstone to the receipt time
+     (also when the app is not in the list).
+   - A `state` entry newer than the tombstone adds the app again and
+     removes the tombstone (the app was created again).
 4. Prune: remove each app whose `lastSeen` is older than `--event-app-stale`
    (45 min), and each app without `lastSeen` (it came from an old check-in).
+   Remove each tombstone older than `--event-app-stale`.
 5. Recompute the counts. Set `lastCheckinTime` to the newest receipt time
    in the merged entries (never older than the current value). Set
    `telemetry.source: argocd-notifications`.
@@ -258,10 +265,12 @@ labels. Admin labels on `metadata.labels` are not touched.
 
 Known limits, all repaired without action:
 
-- **Delete race.** Replica A buffers a `state` for an app. Replica B then
-  flushes a `deleted` for it. A then flushes and adds the app again. The
-  app leaves again after `--event-app-stale`. This needs a delete and a
-  state within one flush interval on two replicas, which is rare.
+- **Delete race (fixed with tombstones).** Replica A buffers a `state`
+  for an app; a heartbeat can wait up to the touch interval. Replica B
+  then flushes a `deleted` for it. Without a tombstone, A's flush would add
+  the app again until the stale prune. The e2e saw this in phase B, so the
+  flush keeps a tombstone per deleted app in `status.deletedApps` for
+  `--event-app-stale`.
 - **Clock skew.** Receipt times come from two replica clocks. With a skew
   larger than the gap between two events, the older state can win until
   the next event. NTP keeps the skew far below the 30 s flush interval.
@@ -296,7 +305,22 @@ type App struct {
 	// +optional
 	LastSeen *metav1.MicroTime `json:"lastSeen,omitempty"`
 }
+
+// DeletedApps are apps removed by a `deleted` event. They are kept for
+// --event-app-stale so that an older event from another replica does not
+// add the app again. Only notification edges set it.
+// +listType=atomic
+// +optional
+DeletedApps []DeletedApp `json:"deletedApps,omitempty"` // in EdgeStatus
+
+type DeletedApp struct {
+	Name      string           `json:"name"`
+	DeletedAt metav1.MicroTime `json:"deletedAt"`
+}
 ```
+
+A check-in apply has no `deletedApps`, so server-side apply removes them:
+a check-in is a full snapshot.
 
 `status.apps` stays an atomic list. The check-in still sends the whole
 list, and the flush sends the whole merged list.

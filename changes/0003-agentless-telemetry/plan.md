@@ -23,6 +23,24 @@
   - Open risk: at the caps (2000 edges × 5000 apps) the buffer can use
     more than 1 GB per replica. The expected use (1000 × 300) is about
     10–30 MB. Step 8 measures it against the 192Mi memory limit.
+- **Steps 6–7:**
+  - `deploy/edge-notifications/` is a Component with the placeholders
+    `EDGE_NAME`, `HUB_URL` and `TOKEN`. The README tells the admin to
+    restart the notifications controller after the change (live reload is
+    not tested).
+  - Private CA: the CA in `argocd-tls-certs-cm`, under the hub host name,
+    works on both versions. The notifications controller calls
+    `httputil.SetCertResolver(argocert.GetCertificateForConnect)`.
+  - Scenario 7 takes about 112 s per version.
+- **Tombstones (design change, found by e2e 7.2):**
+  - Replica A could add a deleted app again with an older buffered state,
+    after replica B had flushed the delete. A heartbeat waits up to the
+    touch interval, so this is not rare.
+  - Fix: `status.deletedApps` (additive CRD field) keeps a tombstone per
+    deleted app for `--event-app-stale`. A `state` entry that is not newer
+    than the tombstone is skipped.
+  - The spec "Flush" step 3, "Known limits" and "API changes" are updated.
+  - e2e 7.2 runs without the sleep that hid the race.
 - **Step 8:**
   - Scenario C passed: 300000 of 300000 `202`, and all Edges correct. The
     numbers are in the spec ("Measured").
