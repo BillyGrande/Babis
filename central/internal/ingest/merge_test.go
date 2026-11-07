@@ -20,15 +20,21 @@ func st(sync, health, rev string, d time.Duration) entry {
 
 func del(d time.Duration) entry { return entry{event: wire.EventDeleted, received: clock.Add(d)} }
 
+func tomb(name string, d time.Duration) v1alpha1.DeletedApp {
+	return v1alpha1.DeletedApp{Name: name, DeletedAt: *at(d)}
+}
+
 func TestMergeApps(t *testing.T) {
 	const stale = 45 * time.Minute
 	now := clock.Add(time.Minute)
 	tests := []struct {
-		name    string
-		cur     []v1alpha1.App
-		entries map[string]entry
-		want    []v1alpha1.App
-		newest  time.Time
+		name       string
+		cur        []v1alpha1.App
+		curDeleted []v1alpha1.DeletedApp
+		entries    map[string]entry
+		want       []v1alpha1.App
+		wantDel    []v1alpha1.DeletedApp
+		newest     time.Time
 	}{
 		{
 			name:    "upsert new",
@@ -70,14 +76,64 @@ func TestMergeApps(t *testing.T) {
 			},
 			entries: map[string]entry{"a": del(0)},
 			want:    []v1alpha1.App{{Name: "b", LastSeen: at(-time.Minute)}},
+			wantDel: []v1alpha1.DeletedApp{tomb("a", 0)},
 			newest:  clock,
 		},
 		{
-			name:    "delete unknown",
+			name:    "delete of an absent app writes a tombstone",
 			cur:     []v1alpha1.App{{Name: "b", LastSeen: at(-time.Minute)}},
 			entries: map[string]entry{"a": del(0)},
 			want:    []v1alpha1.App{{Name: "b", LastSeen: at(-time.Minute)}},
+			wantDel: []v1alpha1.DeletedApp{tomb("a", 0)},
 			newest:  clock,
+		},
+		{
+			name:       "newer delete moves the tombstone forward",
+			curDeleted: []v1alpha1.DeletedApp{tomb("a", 0)},
+			entries:    map[string]entry{"a": del(time.Second)},
+			want:       []v1alpha1.App{},
+			wantDel:    []v1alpha1.DeletedApp{tomb("a", time.Second)},
+			newest:     clock.Add(time.Second),
+		},
+		{
+			name:       "older delete keeps the tombstone",
+			curDeleted: []v1alpha1.DeletedApp{tomb("a", 0)},
+			entries:    map[string]entry{"a": del(-time.Second)},
+			want:       []v1alpha1.App{},
+			wantDel:    []v1alpha1.DeletedApp{tomb("a", 0)},
+			newest:     clock.Add(-time.Second),
+		},
+		{
+			name:       "older state skipped by the tombstone",
+			curDeleted: []v1alpha1.DeletedApp{tomb("a", 0)},
+			entries:    map[string]entry{"a": st("Synced", "Healthy", "", -time.Second)},
+			want:       []v1alpha1.App{},
+			wantDel:    []v1alpha1.DeletedApp{tomb("a", 0)},
+		},
+		{
+			name:       "state at the tombstone time skipped",
+			curDeleted: []v1alpha1.DeletedApp{tomb("a", 0)},
+			entries:    map[string]entry{"a": st("Synced", "Healthy", "", 0)},
+			want:       []v1alpha1.App{},
+			wantDel:    []v1alpha1.DeletedApp{tomb("a", 0)},
+		},
+		{
+			name:       "newer state creates the app again and clears the tombstone",
+			curDeleted: []v1alpha1.DeletedApp{tomb("a", 0), tomb("b", 0)},
+			entries:    map[string]entry{"a": st("Synced", "Healthy", "", time.Microsecond)},
+			want:       []v1alpha1.App{{Name: "a", Sync: "Synced", Health: "Healthy", LastSeen: at(time.Microsecond)}},
+			wantDel:    []v1alpha1.DeletedApp{tomb("b", 0)},
+			newest:     clock.Add(time.Microsecond),
+		},
+		{
+			name: "tombstone prune by age and sort",
+			curDeleted: []v1alpha1.DeletedApp{
+				tomb("z", time.Minute-stale),
+				tomb("old", time.Minute-stale-time.Microsecond),
+				tomb("b", 0),
+			},
+			want:    []v1alpha1.App{},
+			wantDel: []v1alpha1.DeletedApp{tomb("b", 0), tomb("z", time.Minute-stale)},
 		},
 		{
 			name:    "delete older than lastSeen skipped",
@@ -121,9 +177,12 @@ func TestMergeApps(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, newest := mergeApps(tc.cur, tc.entries, now, stale)
+			got, gotDel, newest := mergeApps(tc.cur, tc.curDeleted, tc.entries, now, stale)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("apps\n got %+v\nwant %+v", got, tc.want)
+			}
+			if !reflect.DeepEqual(gotDel, tc.wantDel) {
+				t.Errorf("deletedApps\n got %+v\nwant %+v", gotDel, tc.wantDel)
 			}
 			if !newest.Equal(tc.newest) {
 				t.Errorf("newest %v, want %v", newest, tc.newest)
@@ -161,6 +220,7 @@ func TestMaterial(t *testing.T) {
 		{Name: "a", Sync: "Synced", Health: "Healthy", Revision: "r1", LastSeen: at(0)},
 		{Name: "c", Sync: "Synced", Health: "Healthy"}, // from a check-in
 	}
+	curDeleted := []v1alpha1.DeletedApp{tomb("gone", 0)}
 	tests := []struct {
 		name    string
 		entries map[string]entry
@@ -174,13 +234,19 @@ func TestMaterial(t *testing.T) {
 		{"health differs", map[string]entry{"a": st("Synced", "Degraded", "r1", time.Second)}, true},
 		{"revision differs", map[string]entry{"a": st("Synced", "Healthy", "r2", time.Second)}, true},
 		{"delete present", map[string]entry{"a": del(time.Second)}, true},
-		{"delete unknown", map[string]entry{"x": del(time.Second)}, false},
+		{"delete of an absent app without tombstone", map[string]entry{"x": del(time.Second)}, true},
+		{"delete newer than the tombstone", map[string]entry{"gone": del(time.Second)}, true},
+		{"delete at the tombstone time", map[string]entry{"gone": del(0)}, false},
+		{"delete older than the tombstone", map[string]entry{"gone": del(-time.Second)}, false},
+		{"state older than the tombstone", map[string]entry{"gone": st("Synced", "Healthy", "", -time.Second)}, false},
+		{"state at the tombstone time", map[string]entry{"gone": st("Synced", "Healthy", "", 0)}, false},
+		{"state newer than the tombstone", map[string]entry{"gone": st("Synced", "Healthy", "", time.Second)}, true},
 		{"change but skipped as older", map[string]entry{"a": st("OutOfSync", "Healthy", "r1", -time.Second)}, false},
 		{"delete but skipped as equal", map[string]entry{"a": del(0)}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := material(cur, tc.entries); got != tc.want {
+			if got := material(cur, curDeleted, tc.entries); got != tc.want {
 				t.Errorf("material = %v, want %v", got, tc.want)
 			}
 		})

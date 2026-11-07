@@ -200,6 +200,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              deletedApps:
+                description: |-
+                  DeletedApps are apps removed by an ArgoCD notification `deleted` event.
+                  They are kept for --event-app-stale so that an older event from another
+                  replica does not add the app again. Only notification edges set it.
+                items:
+                  description: |-
+                    DeletedApp is a tombstone for an app that an ArgoCD notification `deleted`
+                    event removed.
+                  properties:
+                    deletedAt:
+                      description: DeletedAt is the receipt time of the deleted event.
+                      format: date-time
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - deletedAt
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               labels:
                 additionalProperties:
                   type: string

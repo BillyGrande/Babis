@@ -68,6 +68,14 @@ type App struct {
 	LastSeen *metav1.MicroTime `json:"lastSeen,omitempty"`
 }
 
+// DeletedApp is a tombstone for an app that an ArgoCD notification `deleted`
+// event removed.
+type DeletedApp struct {
+	Name string `json:"name"`
+	// DeletedAt is the receipt time of the deleted event.
+	DeletedAt metav1.MicroTime `json:"deletedAt"`
+}
+
 // EdgeStatus is the observed state. Ingest writes everything except
 // conditions; the reconciler writes only conditions.
 type EdgeStatus struct {
@@ -89,6 +97,12 @@ type EdgeStatus struct {
 	// +listType=atomic
 	// +optional
 	Apps []App `json:"apps,omitempty"`
+	// DeletedApps are apps removed by an ArgoCD notification `deleted` event.
+	// They are kept for --event-app-stale so that an older event from another
+	// replica does not add the app again. Only notification edges set it.
+	// +listType=atomic
+	// +optional
+	DeletedApps []DeletedApp `json:"deletedApps,omitempty"`
 	// +optional
 	AppsTotal int `json:"appsTotal"`
 	// +optional

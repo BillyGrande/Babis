@@ -349,10 +349,6 @@ INGRESS
   # 7.2 A new app arrives; a deleted app (with the finalizer) leaves at once.
   notif_app notif-app finalizer
   wait_for "7.2 notif-app is in $EDGE status.apps" 90 has_app notif-app
-  # Let the buffers of both operator replicas settle before the delete. A
-  # create and a delete within one flush interval can leave a ghost app
-  # (see plan.md Drift, step 7).
-  sleep 12
   kubectl -n argocd delete app notif-app --wait=false
   wait_for "7.2 notif-app left status.apps (deleted event)" 90 no_app notif-app
   wait_for "7.2 notif-app is gone from the cluster (finalizer done)" 120 app_gone notif-app

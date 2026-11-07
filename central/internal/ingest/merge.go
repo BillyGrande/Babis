@@ -21,27 +21,46 @@ func skipped(app v1alpha1.App, found bool, e entry) bool {
 	return found && app.LastSeen != nil && !e.received.After(app.LastSeen.Time)
 }
 
-// mergeApps applies the entries to the current app list, then removes stale
-// apps and sorts by name. An app is stale when it has no lastSeen (it came
-// from a check-in) or its lastSeen is older than now-stale. newest is the
-// latest receipt time of the entries that were applied, or zero.
-func mergeApps(cur []v1alpha1.App, entries map[string]entry, now time.Time, stale time.Duration) (apps []v1alpha1.App, newest time.Time) {
+// buried reports whether a state entry is not newer than the app's tombstone.
+// The app was deleted after this state, maybe through another replica, so the
+// state must not add it again.
+func buried(tombs map[string]time.Time, name string, e entry) bool {
+	at, ok := tombs[name]
+	return ok && e.event != wire.EventDeleted && !e.received.After(at)
+}
+
+// mergeApps applies the entries to the current app list and tombstones:
+//   - a `deleted` entry removes the app and moves its tombstone to the
+//     receipt time (also for an app that is not in the list);
+//   - a `state` entry not newer than the tombstone is skipped; a newer one
+//     adds or updates the app and removes the tombstone;
+//   - an entry not newer than the app's lastSeen is skipped.
+//
+// Then it removes stale apps (no lastSeen, which means from a check-in, or
+// lastSeen older than now-stale) and stale tombstones, and sorts both lists
+// by name. newest is the latest receipt time of the applied entries, or zero.
+func mergeApps(cur []v1alpha1.App, curDeleted []v1alpha1.DeletedApp, entries map[string]entry, now time.Time, stale time.Duration) (apps []v1alpha1.App, deleted []v1alpha1.DeletedApp, newest time.Time) {
 	byName := make(map[string]v1alpha1.App, len(cur)+len(entries))
 	for _, a := range cur {
 		byName[a.Name] = a
 	}
+	tombs := tombstones(curDeleted)
 	for name, e := range entries {
 		a, found := byName[name]
-		if skipped(a, found, e) {
+		if skipped(a, found, e) || buried(tombs, name, e) {
 			continue
 		}
 		if e.event == wire.EventDeleted {
 			delete(byName, name)
+			if e.received.After(tombs[name]) {
+				tombs[name] = e.received
+			}
 		} else {
 			byName[name] = v1alpha1.App{
 				Name: name, Sync: e.sync, Health: e.health, Revision: e.revision,
 				LastSeen: &metav1.MicroTime{Time: e.received},
 			}
+			delete(tombs, name)
 		}
 		if e.received.After(newest) {
 			newest = e.received
@@ -56,25 +75,44 @@ func mergeApps(cur []v1alpha1.App, entries map[string]entry, now time.Time, stal
 		apps = append(apps, a)
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Name < apps[j].Name })
-	return apps, newest
+	for name, at := range tombs {
+		if !at.Before(cutoff) {
+			deleted = append(deleted, v1alpha1.DeletedApp{Name: name, DeletedAt: metav1.MicroTime{Time: at}})
+		}
+	}
+	sort.Slice(deleted, func(i, j int) bool { return deleted[i].Name < deleted[j].Name })
+	return apps, deleted, newest
 }
 
-// material reports whether the entries change the app list: a new app, a
-// delete of a present app, or a different sync, health or revision. Entries
+// tombstones maps app name to deletion time. A duplicate name keeps the latest.
+func tombstones(list []v1alpha1.DeletedApp) map[string]time.Time {
+	m := make(map[string]time.Time, len(list))
+	for _, d := range list {
+		if d.DeletedAt.After(m[d.Name]) {
+			m[d.Name] = d.DeletedAt.Time
+		}
+	}
+	return m
+}
+
+// material reports whether the entries change the status in a way that must
+// be written soon: a new app, a different sync, health or revision, or a
+// delete that removes a present app or moves its tombstone forward. Entries
 // that mergeApps would skip do not count. A changed lastSeen alone is not
 // material; the touch interval covers it.
-func material(cur []v1alpha1.App, entries map[string]entry) bool {
+func material(cur []v1alpha1.App, curDeleted []v1alpha1.DeletedApp, entries map[string]entry) bool {
 	byName := make(map[string]v1alpha1.App, len(cur))
 	for _, a := range cur {
 		byName[a.Name] = a
 	}
+	tombs := tombstones(curDeleted)
 	for name, e := range entries {
 		a, found := byName[name]
-		if skipped(a, found, e) {
+		if skipped(a, found, e) || buried(tombs, name, e) {
 			continue
 		}
 		if e.event == wire.EventDeleted {
-			if found {
+			if at, ok := tombs[name]; found || !ok || e.received.After(at) {
 				return true
 			}
 			continue

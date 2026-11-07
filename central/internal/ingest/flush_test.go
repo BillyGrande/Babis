@@ -462,3 +462,79 @@ func TestEventApplyBody(t *testing.T) {
 		}
 	}
 }
+
+// TestFlushDeleteAcrossReplicas is the delete race between two replicas on
+// one API server: A buffers an older state of app x, B flushes a newer
+// delete of x, then A flushes. The tombstone keeps x out.
+func TestFlushDeleteAcrossReplicas(t *testing.T) {
+	tests := []struct {
+		name      string
+		heartbeat bool // A's entry is an unchanged state, kept for the touch interval
+	}{
+		{"heartbeat kept for the touch interval", true},
+		{"new app waiting for the flush interval", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			c := fakeAPI(testScheme(t))
+			a, clk := newEventServer(t, c, nil)
+			b, _ := newEventServer(t, c, func(cfg *Config) { cfg.Now = clk.Now })
+			x := event("e1", "state", "x", "Synced", "Healthy", "r1")
+			if tc.heartbeat {
+				mustEvent(t, a, x)
+				a.flushOnce(ctx)
+				clk.Add(31 * time.Second)
+				mustEvent(t, a, x) // t1, same state: not material
+			} else {
+				mustEvent(t, a, event("e1", "state", "y", "Synced", "Healthy", ""))
+				a.flushOnce(ctx)
+				clk.Add(time.Second)
+				mustEvent(t, a, x) // t1, new app: waits for A's flush interval
+			}
+			a.flushOnce(ctx)
+			if a.buf.pending("e1") != 1 {
+				t.Fatalf("A did not keep its entry: %d", a.buf.pending("e1"))
+			}
+
+			clk.Add(time.Second)
+			t2 := clk.Now()
+			mustEvent(t, b, `{"edge":"e1","event":"deleted","app":{"name":"x"}}`)
+			b.flushOnce(ctx)
+			if _, ok := appNames(getEdge(t, c, "e1").Status.Apps)["x"]; ok {
+				t.Fatal("B did not remove x")
+			}
+
+			clk.Add(5 * time.Minute) // A's entry is now due as a touch
+			a.flushOnce(ctx)
+			st := getEdge(t, c, "e1").Status
+			if _, ok := appNames(st.Apps)["x"]; ok {
+				t.Errorf("x added again by the older state of A: %+v", st.Apps)
+			}
+			if len(st.DeletedApps) != 1 || st.DeletedApps[0].Name != "x" || !st.DeletedApps[0].DeletedAt.Time.Equal(t2) {
+				t.Errorf("tombstone %+v, want x at %v", st.DeletedApps, t2)
+			}
+			if a.buf.pending("e1") != 0 {
+				t.Errorf("A pending %d", a.buf.pending("e1"))
+			}
+		})
+	}
+}
+
+func TestCheckinClearsTombstones(t *testing.T) {
+	s, c, clk := newFlushServer(t, nil)
+	mustEvent(t, s, `{"edge":"e1","event":"deleted","app":{"name":"x"}}`)
+	s.flushOnce(context.Background())
+	if n := len(getEdge(t, c, "e1").Status.DeletedApps); n != 1 {
+		t.Fatalf("no tombstone after a delete: %d", n)
+	}
+	clk.Add(time.Minute)
+	mustCheckin(t, s, full)
+	st := getEdge(t, c, "e1").Status
+	if len(st.DeletedApps) != 0 {
+		t.Errorf("check-in kept tombstones: %+v", st.DeletedApps)
+	}
+	if st.Telemetry.Source != v1alpha1.TelemetrySourceCheckin || st.AppsTotal != 3 {
+		t.Errorf("status %+v", st)
+	}
+}

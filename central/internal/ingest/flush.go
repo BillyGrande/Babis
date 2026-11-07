@@ -53,9 +53,12 @@ type eventApplyStatus struct {
 	LastCheckinTime metav1.Time        `json:"lastCheckinTime"`
 	Telemetry       v1alpha1.Telemetry `json:"telemetry"`
 	Apps            []v1alpha1.App     `json:"apps,omitempty"`
-	AppsTotal       int                `json:"appsTotal"`
-	AppsSynced      int                `json:"appsSynced"`
-	AppsHealthy     int                `json:"appsHealthy"`
+	// DeletedApps are the tombstones. The check-in apply has none, so a
+	// check-in (a full snapshot) removes them.
+	DeletedApps []v1alpha1.DeletedApp `json:"deletedApps,omitempty"`
+	AppsTotal   int                   `json:"appsTotal"`
+	AppsSynced  int                   `json:"appsSynced"`
+	AppsHealthy int                   `json:"appsHealthy"`
 }
 
 // runFlusher flushes due edges every FlushTick until ctx ends, then does one
@@ -182,7 +185,7 @@ func (s *Server) applyEntries(ctx context.Context, edge *v1alpha1.Edge, entries 
 		return flushDropped, nil
 	}
 	touchFresh := st.LastCheckinTime != nil && st.LastCheckinTime.After(now.Add(-s.cfg.EventTouchInterval))
-	if !force && touchFresh && !material(st.Apps, entries) {
+	if !force && touchFresh && !material(st.Apps, st.DeletedApps, entries) {
 		return flushKept, nil
 	}
 	body, err := json.Marshal(buildEventApply(edge, entries, now, s.cfg.EventAppStale))
@@ -199,7 +202,7 @@ func (s *Server) applyEntries(ctx context.Context, edge *v1alpha1.Edge, entries 
 // body. It is pure. lastCheckinTime moves to the newest applied receipt time
 // and never back; a new Edge with nothing applied gets now.
 func buildEventApply(edge *v1alpha1.Edge, entries map[string]entry, now time.Time, stale time.Duration) eventApply {
-	apps, newest := mergeApps(edge.Status.Apps, entries, now, stale)
+	apps, deleted, newest := mergeApps(edge.Status.Apps, edge.Status.DeletedApps, entries, now, stale)
 	last := newest
 	if cur := edge.Status.LastCheckinTime; cur != nil && cur.After(last) {
 		last = cur.Time
@@ -218,6 +221,7 @@ func buildEventApply(edge *v1alpha1.Edge, entries map[string]entry, now time.Tim
 			LastCheckinTime: metav1.NewTime(last),
 			Telemetry:       v1alpha1.Telemetry{Source: v1alpha1.TelemetrySourceNotifications},
 			Apps:            apps,
+			DeletedApps:     deleted,
 			AppsTotal:       len(apps),
 			AppsSynced:      synced,
 			AppsHealthy:     healthy,
