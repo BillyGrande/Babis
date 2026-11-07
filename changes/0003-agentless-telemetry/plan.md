@@ -5,7 +5,20 @@
 
 ## Drift
 
-None yet.
+- **Step 1:** `spike/combined.sh` copies the parts of `run.sh` that it
+  needs, in place of a shared `spike/lib.sh`. So `run.sh` stays unchanged
+  and does not need a 54-minute re-run.
+- **Step 5:**
+  - `make central-check` also runs `go test -race ./internal/ingest/`.
+  - A failed flush (3 conflicts or another error) also waits one flush
+    interval before the next try, so a broken API server is not called
+    every second for every edge.
+  - An idle edge leaves the buffer only when its last check is older than
+    the flush interval, so the 30 s limit also holds for the next event.
+  - `wire.MaxApps` is exported, and the buffer uses it.
+  - Open risk: at the caps (2000 edges × 5000 apps) the buffer can use
+    more than 1 GB per replica. The expected use (1000 × 300) is about
+    10–30 MB. Step 8 measures it against the 192Mi memory limit.
 
 ## Context
 
