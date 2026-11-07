@@ -118,3 +118,34 @@ func TestContract(t *testing.T) {
 		})
 	}
 }
+
+func TestContractAppEvent(t *testing.T) {
+	schema := compile(t, "app-event.request.schema.json")
+	dir := filepath.Join(wireDir, "app-event-testdata")
+
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no fixtures found: %v", err)
+	}
+	all, _ := os.ReadDir(dir)
+	if len(all) != len(files) {
+		t.Fatalf("app-event-testdata has non-.json files")
+	}
+	for _, f := range files {
+		name := filepath.Base(f)
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Run(name, func(t *testing.T) {
+			switch {
+			case strings.HasPrefix(name, "request-"):
+				checkValid[AppEventRequest](t, schema, data)
+			case strings.HasPrefix(name, "invalid-request-"):
+				checkInvalid[AppEventRequest](t, schema, data)
+			default:
+				t.Fatalf("fixture %s matches no category", name)
+			}
+		})
+	}
+}
