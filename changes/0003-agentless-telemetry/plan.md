@@ -1,6 +1,6 @@
 # Plan: P1b phase B — build agentless telemetry
 
-- **Status:** Accepted 2026-11-07 — in progress
+- **Status:** Done 2026-11-07 — build complete, PR open; release pending
 - **Spec:** [spec.md](spec.md)
 
 ## Drift
