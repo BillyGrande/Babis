@@ -21,6 +21,10 @@ type EdgeReconciler struct {
 	Client client.Client
 	// DefaultHeartbeatTimeout is used when spec.heartbeatTimeout is unset.
 	DefaultHeartbeatTimeout time.Duration
+	// NotificationsHeartbeatTimeout is used for edges with source
+	// argocd-notifications when spec.heartbeatTimeout is unset. Zero means
+	// DefaultHeartbeatTimeout.
+	NotificationsHeartbeatTimeout time.Duration
 	// Now is the clock. Defaults to time.Now.
 	Now func() time.Time
 }
@@ -44,10 +48,8 @@ func (r *EdgeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 		return ctrl.Result{}, err
 	}
-	timeout := r.DefaultHeartbeatTimeout
-	if edge.Spec.HeartbeatTimeout != nil {
-		timeout = edge.Spec.HeartbeatTimeout.Duration
-	}
+	source := edge.Status.Telemetry.Source
+	timeout := HeartbeatTimeout(edge.Spec.HeartbeatTimeout, source, r.DefaultHeartbeatTimeout, r.NotificationsHeartbeatTimeout)
 	var last *time.Time
 	if edge.Status.LastCheckinTime != nil {
 		t := edge.Status.LastCheckinTime.Time
@@ -55,7 +57,7 @@ func (r *EdgeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	rs, rr, rm, requeue := Reachability(last, timeout, now())
-	as, ar, am := ArgoCDReadiness(last, edge.Status.ArgoCD.Components)
+	as, ar, am := ArgoCDReadinessFor(source, last, edge.Status.ArgoCD.Components)
 	if rs == metav1.ConditionFalse {
 		// The last reported components may be arbitrarily old.
 		as, ar, am = metav1.ConditionUnknown, "HeartbeatStale", "Edge is unreachable; its last reported ArgoCD state may be stale"

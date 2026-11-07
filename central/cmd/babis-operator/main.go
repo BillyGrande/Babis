@@ -35,7 +35,7 @@ func main() {
 
 type options struct {
 	fleetNS, ingestAddr, metricsAddr, healthAddr string
-	heartbeat                                    time.Duration
+	heartbeat, notificationsHeartbeat            time.Duration
 	leaderElect, insecure                        bool
 	qps                                          float64
 	burst, maxEdges, maxInflight                 int
@@ -47,6 +47,7 @@ func parseOptions(args []string) (*options, *zap.Options, error) {
 	fs.StringVar(&o.fleetNS, "fleet-namespace", "babis-fleet", "namespace that holds Edge objects")
 	fs.StringVar(&o.ingestAddr, "ingest-addr", ":8090", "listen address of the check-in API")
 	fs.DurationVar(&o.heartbeat, "heartbeat-timeout", 15*time.Minute, "default time without check-in before an edge is unreachable")
+	fs.DurationVar(&o.notificationsHeartbeat, "notifications-heartbeat-timeout", 30*time.Minute, "default time without an ArgoCD notification event before a notification edge is unreachable")
 	fs.StringVar(&o.metricsAddr, "metrics-addr", ":8080", "metrics listen address")
 	fs.StringVar(&o.healthAddr, "health-addr", ":8081", "health probe listen address")
 	fs.BoolVar(&o.leaderElect, "leader-elect", true, "enable leader election")
@@ -106,8 +107,9 @@ func run() error {
 	}
 
 	if err := (&controller.EdgeReconciler{
-		Client:                  mgr.GetClient(),
-		DefaultHeartbeatTimeout: o.heartbeat,
+		Client:                        mgr.GetClient(),
+		DefaultHeartbeatTimeout:       o.heartbeat,
+		NotificationsHeartbeatTimeout: o.notificationsHeartbeat,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("controller: %w", err)
 	}

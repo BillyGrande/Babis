@@ -51,3 +51,26 @@ func ArgoCDReadiness(lastCheckin *time.Time, comps []v1alpha1.Component) (status
 	}
 	return metav1.ConditionTrue, "AllComponentsReady", fmt.Sprintf("All %d components are ready", len(comps))
 }
+
+// HeartbeatTimeout picks the Reachable timeout. The spec override wins.
+// Otherwise a notification edge uses notifications and every other edge uses
+// checkin. A zero notifications value falls back to checkin.
+func HeartbeatTimeout(override *metav1.Duration, source string, checkin, notifications time.Duration) time.Duration {
+	if override != nil {
+		return override.Duration
+	}
+	if source == v1alpha1.TelemetrySourceNotifications && notifications > 0 {
+		return notifications
+	}
+	return checkin
+}
+
+// ArgoCDReadinessFor is ArgoCDReadiness with the telemetry source. A
+// notification edge cannot report component state, so its answer is Unknown.
+func ArgoCDReadinessFor(source string, lastCheckin *time.Time, comps []v1alpha1.Component) (status metav1.ConditionStatus, reason, message string) {
+	if lastCheckin != nil && source == v1alpha1.TelemetrySourceNotifications {
+		return metav1.ConditionUnknown, "NotReported",
+			"Edge reports through ArgoCD notifications; ArgoCD component state is not available"
+	}
+	return ArgoCDReadiness(lastCheckin, comps)
+}
