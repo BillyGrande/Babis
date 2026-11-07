@@ -37,7 +37,7 @@ operator.
 - [x] Document the `--max-edges` overshoot (the count comes from the
   informer cache and can lag a few creates)
 
-## P1b - Agentless telemetry
+## P1b - Agentless telemetry *(built; release pending)*
 
 For edges where nothing can be installed. ArgoCD's own notifications
 controller posts Application events to central. Zero Babis footprint on the
@@ -45,11 +45,13 @@ edge. Design: [changes/0003-agentless-telemetry/spec.md](../changes/0003-agentle
 
 - [x] Spike: confirm the notification template on a real ArgoCD
   ([spike.md](../changes/0003-agentless-telemetry/spike.md))
-- [ ] Wire: `app-event` schema and fixtures
-- [ ] Operator: `POST /api/v1alpha1/app-events`, per-edge coalescing,
-  stale-app prune, `status.telemetry.source`
-- [ ] `deploy/edge-notifications/` kustomize patch
-- [ ] e2e scenario without the CronJob
+- [x] Wire: `app-event` schema and fixtures
+- [x] Operator: `POST /api/v1alpha1/app-events`, per-replica buffer, flush
+  with merge and tombstones, stale-app prune, `status.telemetry.source`
+- [x] `deploy/edge-notifications/` kustomize patch
+- [x] e2e scenario without the CronJob
+- [x] Load scenario C (`SCENARIOS=C make load`; 1000 edges, 300 apps,
+  500 events per second, 0 errors)
 
 ## P2 - Bootstrap
 

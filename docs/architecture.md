@@ -5,8 +5,8 @@ This page is a summary. The design is in
 [changes/0002-redesign/spec.md](../changes/0002-redesign/spec.md); read it
 for detail. See [positioning.md](positioning.md) for scope.
 
-Legend: **[implemented]** exists today (phase P1). **[planned]** is agreed
-design that is not built. Phases are in [roadmap.md](roadmap.md).
+Legend: **[implemented]** is built (phases P1 and P1b). **[planned]** is
+agreed design that is not built. Phases are in [roadmap.md](roadmap.md).
 
 ## Topology [implemented]
 
@@ -24,6 +24,10 @@ design that is not built. Phases are in [roadmap.md](roadmap.md).
                                            │   `kubectl get edges`         │
                                            └───────────────────────────────┘
 ```
+
+An edge without install rights has no `babis checkin`. Its ArgoCD
+notifications controller posts to `POST /api/v1alpha1/app-events` instead.
+See [Agentless path](#central-agentless-path-app-events-implemented).
 
 Three invariants define the topology:
 
@@ -78,8 +82,8 @@ sent, `1` Kubernetes or hub error, `2` usage error.
 A Go controller-runtime manager. Source: `central/`, entry
 `central/cmd/babis-operator`. It has two members.
 
-- **Ingest** (`central/internal/ingest`): `POST /api/v1alpha1/checkin` and
-  `GET /healthz` on `--ingest-addr` (default `:8090`). Bearer-token auth,
+- **Ingest** (`central/internal/ingest`): `POST /api/v1alpha1/checkin`,
+  `POST /api/v1alpha1/app-events` and `GET /healthz` on `--ingest-addr` (default `:8090`). Bearer-token auth,
   1 MiB body cap, strict validation. A check-in from an unknown edge
   **auto-registers** it (creates the Edge). Ingest writes status with
   **server-side apply** (field manager `babis-ingest`). It owns every
@@ -100,10 +104,50 @@ Flags that matter (see `central/cmd/babis-operator/main.go`):
 | `--max-inflight` | `64` | check-ins handled at once; others wait up to 20 s, then get `503` |
 | `--leader-elect` | `true` | only the leader reconciles; every replica serves ingest |
 | `--insecure-no-auth` | `false` | development only; without it an empty `BABIS_INGEST_TOKEN` stops the start |
+| `--event-flush-interval` | `30s` | least time between two change flushes of one edge on one replica |
+| `--event-touch-interval` | `5m` | flush an edge with unchanged states when its status is older than this |
+| `--event-app-stale` | `45m` | remove an app (and a tombstone) with no event for this long |
+| `--notifications-heartbeat-timeout` | `30m` | default `Reachable` timeout for notification edges |
 | `--kube-api-qps`, `--kube-api-burst` | `-1`, `0` | client-side rate limit (off by default) |
 
 `deploy/central` runs `replicas: 2` behind one Service. Ingest needs no
 leader election, and server-side apply is safe with several writers.
+
+### Central: agentless path (`app-events`) [implemented]
+
+For edges where nothing can be installed. ArgoCD's own notifications
+controller sends one request per Application event. The edge admin patches
+two ArgoCD objects with `deploy/edge-notifications/`. Nothing from Babis
+runs on the edge. Design: [0003 spec](../changes/0003-agentless-telemetry/spec.md).
+
+- **Endpoint.** `POST /api/v1alpha1/app-events` on the ingest listener.
+  Same bearer token. Body at most 64 KiB, one Application per request.
+  The handler puts the event in a buffer and answers `202` with `{}`. It
+  makes no API server call, because a slow hub blocks the edge's
+  controller for every app. Errors: `401`, `400`, `413`, `429` (fleet
+  full), `503` (no free slot in 2 s).
+- **Buffer.** Each replica has its own buffer: edge, then app, then the
+  newest event with its receipt time.
+- **Flush.** One goroutine per replica. It flushes an edge after
+  `--event-flush-interval` when a state changed, and after
+  `--event-touch-interval` when only heartbeats arrived. A flush reads the
+  `Edge`, merges the events by receipt time (an older event is skipped),
+  prunes stale apps, recomputes the counts, and applies the status with
+  server-side apply and a `resourceVersion` precondition. On `409` it
+  reads again and retries (3 times, then the next interval). Two replicas
+  can write one `Edge` safely.
+- **Tombstones.** A `deleted` event removes the app and records it in
+  `status.deletedApps`. An older `state` event from the other replica
+  cannot add the app again. A tombstone lives for `--event-app-stale`.
+- **Check-in wins while fresh.** Events for an edge whose source is
+  `checkin` and whose last check-in is inside its heartbeat timeout are
+  dropped.
+- **Conditions.** `Reachable` uses the event age with the default timeout
+  `--notifications-heartbeat-timeout`. `ArgoCDReady` is `Unknown`, reason
+  `NotReported`. ArgoCD version, component state and identity labels are
+  not available on this path.
+- **Load.** 1000 edges with 300 apps at 500 requests per second: 0 errors,
+  p99 3 ms, peak RSS about 147 MiB per replica (`SCENARIOS=C make load`).
 
 ### Edge CRD: `fleet.babis.dev/v1alpha1` [implemented]
 
@@ -112,21 +156,25 @@ Short name `edge`. Printer columns: `ARGOCD`, `READY`, `APPS`, `SYNCED`,
 
 - `spec` (written by humans): `displayName`, `heartbeatTimeout`.
 - `status` (written from check-ins): `lastCheckinTime`, `labels`,
-  `argocd{version, components[]}`, `apps[]`, `appsTotal`, `appsSynced`,
-  `appsHealthy`, and `conditions`.
+  `argocd{version, components[]}`, `apps[]` (with `lastSeen` on
+  notification edges), `deletedApps[]`, `telemetry.source` (`checkin` or
+  `argocd-notifications`), `appsTotal`, `appsSynced`, `appsHealthy`, and
+  `conditions`. A `-o wide` listing adds the column `SOURCE`.
 - `metadata.labels` are for admins (`kubectl label`). Ingest never changes
   them. `status.labels` is what the edge says about itself.
 
 Conditions (pure functions in `central/internal/controller`, table-tested):
 
-- **`Reachable`**: `True` when the last check-in is newer than the
-  heartbeat timeout. `Unknown` before the first check-in. Reachability is
+- **`Reachable`**: `True` when the last check-in (or event) is newer than
+  the heartbeat timeout (default 15 min for check-ins, 30 min for
+  notifications). `Unknown` before the first check-in. Reachability is
   inferred, never probed. Silence is the only signal that works with
   outbound-only edges.
 - **`ArgoCDReady`**: `Unknown` while the edge is not `Reachable` (the last
   reported state may be stale). Otherwise `True` when every component has
   `ready == desired` and `desired > 0`; `False` with the names of the
-  components that are not ready.
+  components that are not ready. Always `Unknown` (`NotReported`) for a
+  notification edge.
 
 CRDs, not a database, are the state store. History would be a separate,
 additive consumer.
@@ -134,9 +182,11 @@ additive consumer.
 ### Wire contract [implemented]
 
 `wire/` holds the JSON Schemas (`checkin.request.schema.json`,
-`checkin.response.schema.json`) and golden fixtures in `wire/testdata/`.
+`checkin.response.schema.json`, `app-event.request.schema.json`) and
+golden fixtures in `wire/testdata/` and `wire/app-event-testdata/`.
 The Go tests (`central/internal/wire`) and the Rust tests
-(`edge/tests/contract.rs`) run the same fixtures. CI fails on drift. See
+(`edge/tests/contract.rs`) run the same check-in fixtures. Only the Go
+tests run the app-event fixtures, because the edge never sends them. CI fails on drift. See
 [wire/README.md](../wire/README.md).
 
 Rules:
@@ -219,6 +269,8 @@ small `Lease`. It waits for a load run that shows the need.
 | CronJob suspended or deleted | `Reachable=False` after the heartbeat timeout. |
 | Duplicate edge names | Two edges write one Edge object. Prevented by naming practice now. Per-edge tokens will enforce it [planned]. |
 | Clock skew on an edge | Harmless: `lastCheckinTime` is stamped by the operator when it receives the check-in. |
+| Hub down or slow (notification edge) | The controller retries 3 times and gives up. The next 10-minute bucket sends the state again. ArgoCD sync is not affected. |
+| Operator replica restarts | It loses its buffer (at most 30 s of changes or 5 min of heartbeats). The next bucket repairs it. |
 | Fleet full (`--max-edges`) | New edges get `429`. Known edges keep working. |
 | Burst over `--max-inflight` | Requests wait up to 20 s, then get `503` with `Retry-After`. The edge fails and retries at the next tick. |
 
@@ -231,11 +283,12 @@ central/               Go module github.com/BillyGrande/babis/central
   cmd/babis-operator/  operator entry
   cmd/babis-loadgen/   load generator for `make load`
   internal/wire/       request/response types and Validate()
-  internal/ingest/     POST /api/v1alpha1/checkin
+  internal/ingest/     POST /api/v1alpha1/checkin and /app-events (buffer, flush, merge)
   internal/controller/ Reachability(), ArgoCDReadiness(), reconciler
   config/crd, rbac/    generated: never hand-edit
-wire/                  JSON Schemas and golden fixtures (testdata/)
+wire/                  JSON Schemas and golden fixtures (testdata/, app-event-testdata/)
 deploy/edge/           kustomize: CronJob, ConfigMap, Role (install in the ArgoCD namespace)
+deploy/edge-notifications/  kustomize patch for the ArgoCD notifications objects (no Babis install)
 deploy/central/        kustomize: namespaces, CRD, RBAC, Deployment, Service
 images/                Dockerfiles (prebuilt static binaries are copied in)
 test/e2e/              kind end-to-end, oldest and newest ArgoCD
@@ -249,11 +302,9 @@ changes/               intent, spec, plan per change
 
 Short form. The details are in the spec and in [roadmap.md](roadmap.md).
 
-- **P1b, agentless telemetry [planned].** ArgoCD's own notifications
-  controller posts Application events to `POST /api/v1alpha1/app-events`.
-  Nothing from Babis runs on the edge. Fallback for edges that cannot
-  install a CronJob. Design:
-  [0003 spec](../changes/0003-agentless-telemetry/spec.md).
+- **P1b, agentless telemetry [implemented; release pending].** See
+  [Central: agentless path](#central-agentless-path-app-events-implemented).
+  Design: [0003 spec](../changes/0003-agentless-telemetry/spec.md).
 - **P2, bootstrap [planned].** `babis bootstrap` installs ArgoCD with Helm
   (shell-out to `helm`), writes identity labels on the cluster secret
   `in-cluster`, and reads edge config from the ConfigMap `babis-edge`.

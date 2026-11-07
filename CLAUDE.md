@@ -19,8 +19,8 @@ Complements — does not replace — [argocd-agent]. Read `docs/positioning.md`
 edge/                    # Rust crate, binary `babis` (toolchain pinned in rust-toolchain.toml)
 central/                 # Go module github.com/BillyGrande/babis/central
   cmd/babis-operator/    # operator entry
-wire/                    # check-in JSON Schemas + golden fixtures (testdata/)
-deploy/{edge,central}/   # kustomize manifests (deploy/README.md: install steps)
+wire/                    # check-in and app-event JSON Schemas + golden fixtures (testdata/, app-event-testdata/)
+deploy/{edge,central,edge-notifications}/   # kustomize manifests (deploy/README.md: install steps)
 images/                  # Dockerfiles (prebuilt static binaries copied in)
 test/e2e/                # kind end-to-end, oldest + newest supported ArgoCD
 test/budget/             # edge size / peak-RSS budget

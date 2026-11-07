@@ -142,6 +142,16 @@ Then run:
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
+## Edges without install rights
+
+Some edges allow no CronJob. For these, ArgoCD's own notifications
+controller reports to the hub. It posts one event per Application. Nothing
+from Babis runs on the edge. You only edit two ArgoCD objects. The hub
+shows the edge as an `Edge` with its apps and `Reachable`. You lose the
+ArgoCD version, the component readiness (`ArgoCDReady` is `Unknown` with
+reason `NotReported`) and the identity labels. See
+[deploy/README.md](deploy/README.md#edges-without-install-rights-argocd-notifications).
+
 ## What Babis is not
 
 Babis distributes no manifests between clusters, opens no connections into
@@ -161,7 +171,8 @@ distribution). The boundary is written down in
 - [docs/roadmap.md](docs/roadmap.md) — phases P1 to P4 and what is done
 - [deploy/README.md](deploy/README.md) — install on real clusters
 - [changes/0002-redesign/spec.md](changes/0002-redesign/spec.md) — the design
-- [wire/README.md](wire/README.md) — the check-in contract
+- [changes/0003-agentless-telemetry/spec.md](changes/0003-agentless-telemetry/spec.md) — the design of edges without install rights
+- [wire/README.md](wire/README.md) — the check-in and app-event contracts
 - [CLAUDE.md](CLAUDE.md) — contributor conventions
 
 ## Development
@@ -173,7 +184,7 @@ make build        # bin/babis-operator and bin/babis (static musl)
 make edge-budget  # edge binary <= 3 MB, peak RSS <= 5 MB at 300 apps
 make images       # babis-edge:dev, babis-operator:dev
 make e2e          # kind end-to-end, oldest and newest ArgoCD (~12 min)
-make load         # 1000 simulated edges against the operator
+make load         # 1000 simulated edges against the operator (SCENARIOS=C: app events)
 ```
 
 Layout: `edge/` (Rust CLI), `central/` (Go operator), `wire/` (JSON Schemas
